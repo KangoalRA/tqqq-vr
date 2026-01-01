@@ -82,7 +82,12 @@ if m and m["price"] > 0:
         st.header("⚙️ 시장 지표")
         st.metric("나스닥 낙폭", f"{m['dd']}%")
         fng_input = st.number_input("FnG Index", value=float(m['fng']))
+
+        # ▼ [여기] 이 코드를 추가하세요! ▼
+        st.markdown("[👉 FnG 지수 공식 사이트 (CNN)](https://edition.cnn.com/markets/fear-and-greed)")
+        # ▲ --------------------------- ▲
         
+        fng_input = st.number_input("FnG Index", value=float(m['fng']))
         st.divider()
         st.subheader("🛠️ 밴드폭 추천")
         rec_val, rec_msg = get_recommended_band(m['dd'], m['bull'])
