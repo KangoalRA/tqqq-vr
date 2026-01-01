@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import requests
 
 # --- [0. 페이지 설정 및 데이터 엔진] ---
-st.set_page_config(page_title="TQQQ VR 5.0 지능형 관제탑", layout="wide")
+st.set_page_config(page_title="TQQQ VR V5.0 계산기", layout="wide")
 
 @st.cache_data(ttl=600)
 def get_market_intelligence():
@@ -50,7 +50,7 @@ def get_recommended_band(dd, is_bull):
     elif dd >= -10 and is_bull: return 20, "🟩 상승장: 수익 극대화 위해 20% 추천"
     return 15, "⬜ 일반: 표준 밴드 15% 추천"
 
-# --- [2. 메인 화면 상단: 빡센 사용 설명서 고정] ---
+# --- [2. 메인 화면 상단: 매뉴얼만 수정됨] ---
 st.title("🚀 TQQQ VR 5.0 지능형 관제탑")
 with st.expander("🚨 필독: VR 5.0 시작 및 운영 매뉴얼", expanded=True):
     col_m1, col_m2 = st.columns(2)
@@ -63,12 +63,13 @@ with st.expander("🚨 필독: VR 5.0 시작 및 운영 매뉴얼", expanded=Tru
         * **모드 설정:** 반드시 **'최초 시작'** 모드를 선택하십시오.
         """)
     with col_m2:
+        # [수정된 부분] 2주 격주 루틴으로 텍스트 변경
         st.markdown("""
-        ### 2. 매일 & 매달 루틴
-        * **매일 아침:** 체결 시 **수량**과 **현금 Pool**을 즉시 갱신합니다.
-        * **2주 주기:** '사이클 업데이트'로 목표 V를 갱신합니다.
-        * **한 달 리필:** 현금을 입금한 날 '사이클 업데이트' 모드에서 **[리필금액]**을 입력하여 V를 점프시킵니다.
-        * **안전장치:** 지표가 충족되지 않아 뜨는 **매수 보류** 사인을 절대 무시하지 마십시오.
+        ### 2. 2주 1회 (격주) 루틴
+        * **D-Day (2주마다):** 정해진 날에만 앱을 켜고 수량과 현금을 갱신합니다.
+        * **주문 실행:** LOC 매수/매도를 걸어두고 앱을 끕니다.
+        * **휴식:** 체결 여부와 상관없이 **다음 2주 뒤까지 앱을 켜지 않습니다.**
+        * **리필:** 월급날인 경우에만 '사이클 업데이트'시 리필액을 입력합니다.
         """)
 
 # --- [3. 사이드바 및 입력부] ---
@@ -125,6 +126,7 @@ if m and m["price"] > 0:
                 for i in range(1, 10):
                     t_q = qty + i
                     p = v_l / t_q
+                    # [주의] 사용자 요청대로 1.05 배율 유지
                     if p < m['price'] * 1.05: st.code(f"LOC 매수 {p:.2f}$ ({t_q}주)")
             else: st.error("FnG 안전장치 작동: 매수 대기")
         else: st.success("✅ 현재 구간: 관망 (현금 보유)")
