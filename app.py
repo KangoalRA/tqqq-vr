@@ -6,52 +6,82 @@ from datetime import datetime, timedelta
 import requests
 
 # --- [0. 페이지 설정 및 데이터 엔진] ---
-st.set_page_config(page_title="TQQQ VR V5.0 계산기", layout="wide")
+st.set_page_config(page_title="TQQQ VR 5.0 지능형 관제탑", layout="wide")
 
 @st.cache_data(ttl=600)
 def get_market_intelligence():
     data = {"price": 0.0, "fx": 1350.0, "dd": 0.0, "fng": 25.0, "bull": True}
     try:
+        # TQQQ 현재가 (5일치 데이터 중 마지막)
         t_hist = yf.Ticker("TQQQ").history(period="5d")
+        # 나스닥100 지수 (MDD 계산용)
         n_hist = yf.Ticker("^NDX").history(period="2y")
-        if not t_hist.empty: data["price"] = round(t_hist['Close'].iloc[-1], 2)
+        
+        if not t_hist.empty: 
+            data["price"] = round(t_hist['Close'].iloc[-1], 2)
+        
         if not n_hist.empty:
             ndx_high = n_hist['Close'].max()
             curr_ndx = n_hist['Close'].iloc[-1]
+            # 고점 대비 하락률(MDD)
             data["dd"] = round((curr_ndx / ndx_high - 1) * 100, 2)
+            # 200일 이동평균선 추세 (Bull/Bear)
             data["bull"] = curr_ndx > n_hist['Close'].rolling(window=200).mean().iloc[-1]
         
+        # 환율 정보
         fx_hist = yf.Ticker("USDKRW=X").history(period="1d")
-        if not fx_hist.empty: data["fx"] = round(fx_hist['Close'].iloc[-1], 2)
+        if not fx_hist.empty: 
+            data["fx"] = round(fx_hist['Close'].iloc[-1], 2)
 
+        # 공포/탐욕 지수 (CNN)
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             r = requests.get("https://production.dataviz.cnn.io/index/fearandgreed/static/history", headers=headers, timeout=3)
-            if r.status_code == 200: data["fng"] = float(r.json()['fear_and_greed']['score'])
-        except: pass
+            if r.status_code == 200: 
+                data["fng"] = float(r.json()['fear_and_greed']['score'])
+        except: 
+            pass
+            
         return data
-    except: return data
+    except: 
+        return data
 
 m = get_market_intelligence()
 
 # --- [1. 지능형 로직 함수] ---
 def check_safety(dd, fng):
-    if dd > -10: return True, 1.0, "🟩 정상장: 쿼터 100% 가동", "normal"
+    # 나스닥 -10% 이내 (정상장)
+    if dd > -10: 
+        return True, 1.0, "🟩 정상장: 쿼터 100% 가동", "normal"
+    # 나스닥 -10% ~ -20% (조정장)
     elif -20 < dd <= -10:
-        if fng <= 15: return True, 0.5, "🟧 조정장: 쿼터 50% (FnG 15 충족)", "warning"
-        else: return False, 0.0, f"🚫 조정장 매수 보류: FnG {fng} (15이하 필요)", "error"
+        if fng <= 15: 
+            return True, 0.5, "🟧 조정장: 쿼터 50% (FnG 15 충족)", "warning"
+        else: 
+            return False, 0.0, f"🚫 조정장 매수 보류: FnG {fng} (15이하 필요)", "error"
+    # 나스닥 -20% 이하 (하락장)
     else:
-        if fng <= 10: return True, 0.3, "🟥 하락장: 쿼터 30% (FnG 10 충족)", "critical"
-        else: return False, 0.0, f"🚫 하락장 방어: FnG {fng} (10이하 필요)", "error"
+        if fng <= 10: 
+            return True, 0.3, "🟥 하락장: 쿼터 30% (FnG 10 충족)", "critical"
+        else: 
+            return False, 0.0, f"🚫 하락장 방어: FnG {fng} (10이하 필요)", "error"
 
 def get_recommended_band(dd, is_bull):
-    if not is_bull or dd < -20: return 10, "🟥 하락/공포장: 방어 위해 10% 추천"
-    elif -20 <= dd < -10: return 15, "🟧 조정장: 변동성 대응 위해 15% 추천"
-    elif dd >= -10 and is_bull: return 20, "🟩 상승장: 수익 극대화 위해 20% 추천"
+    # 하락장이거나 200일선 아래면 방어적으로 10%
+    if not is_bull or dd < -20: 
+        return 10, "🟥 하락/공포장: 방어 위해 10% 추천"
+    # 조정장엔 15%
+    elif -20 <= dd < -10: 
+        return 15, "🟧 조정장: 변동성 대응 위해 15% 추천"
+    # 상승장엔 20%
+    elif dd >= -10 and is_bull: 
+        return 20, "🟩 상승장: 수익 극대화 위해 20% 추천"
+    
     return 15, "⬜ 일반: 표준 밴드 15% 추천"
 
-# --- [2. 메인 화면 상단: 매뉴얼만 수정됨] ---
+# --- [2. 메인 화면 상단] ---
 st.title("🚀 TQQQ VR 5.0 지능형 관제탑")
+
 with st.expander("🚨 필독: VR 5.0 시작 및 운영 매뉴얼", expanded=True):
     col_m1, col_m2 = st.columns(2)
     with col_m1:
@@ -63,7 +93,6 @@ with st.expander("🚨 필독: VR 5.0 시작 및 운영 매뉴얼", expanded=Tru
         * **모드 설정:** 반드시 **'최초 시작'** 모드를 선택하십시오.
         """)
     with col_m2:
-        # [수정된 부분] 2주 격주 루틴으로 텍스트 변경
         st.markdown("""
         ### 2. 2주 1회 (격주) 루틴
         * **D-Day (2주마다):** 정해진 날에만 앱을 켜고 수량과 현금을 갱신합니다.
@@ -95,7 +124,7 @@ if m and m["price"] > 0:
             v1 = m['price'] * qty
         else:
             v_old = st.number_input("직전 V1 ($)", value=m['price']*qty)
-            v1 = v_old # 실제 dr 로직은 이전 코드와 동일
+            v1 = v_old 
             cur = st.radio("한달 적립 통화", ["원화", "달러"], horizontal=True)
             add = (st.number_input("리필(원)", value=0)/m['fx']) if cur=="원화" else st.number_input("리필($)", value=0.0)
             v1 += add
@@ -104,52 +133,97 @@ if m and m["price"] > 0:
     v_l, v_u = v1 * (1-band_pct), v1 * (1+band_pct)
     ok, qta, msg, m_type = check_safety(m['dd'], fng_input)
 
-    # --- [4. 대시보드 출력부] ---
+    # --- [4. 화면 구성: 탭 분리] ---
     st.subheader(f"📈 실시간 가이드 (TQQQ: ${m['price']})")
-    if m_type == "normal": st.success(msg)
-    elif m_type == "warning": st.warning(msg)
-    else: st.error(msg)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("현재 평가금", f"${m['price']*qty:,.1f}")
-    c2.metric("목표 가치(V)", f"${v1:,.1f}")
-    c3.metric("매수선(하단)", f"${v_l:,.1f}")
+    # 탭 생성
+    tab1, tab2 = st.tabs(["📊 메인 대시보드", "📘 안전장치/로직 설명서"])
 
-    st.divider()
+    # ==========================================
+    # 탭 1: 기존 대시보드 (매매용)
+    # ==========================================
+    with tab1:
+        if m_type == "normal": st.success(msg)
+        elif m_type == "warning": st.warning(msg)
+        else: st.error(msg)
 
-    l, r = st.columns(2)
-    with l:
-        st.markdown("#### 📉 매수 가이드")
-        if m['price']*qty < v_l:
-            if ok:
-                st.write(f"가용 쿼터 {qta*100:.0f}% 적용")
-                for i in range(1, 10):
-                    t_q = qty + i
-                    p = v_l / t_q
-                    # [주의] 사용자 요청대로 1.05 배율 유지
-                    if p < m['price'] * 1.05: st.code(f"LOC 매수 {p:.2f}$ ({t_q}주)")
-            else: st.error("FnG 안전장치 작동: 매수 대기")
-        else: st.success("✅ 현재 구간: 관망 (현금 보유)")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("현재 평가금", f"${m['price']*qty:,.1f}")
+        c2.metric("목표 가치(V)", f"${v1:,.1f}")
+        c3.metric("매수선(하단)", f"${v_l:,.1f}")
 
-    with r:
-        st.markdown("#### 📈 매도 가이드")
-        if m['price']*qty > v_u:
-            for i in range(1, 5):
-                t_q = qty - i
-                if t_q > 0:
-                    p = v1 / t_q
-                    if p > m['price']: st.code(f"LOC 매도 {p:.2f}$ ({qty-t_q}주 판매)")
-        else: st.success("✅ 현재 구간: 관망 (주식 보유)")
+        st.divider()
 
-    # 그래프 출력
-    st.divider()
-    fig = go.Figure()
-    dr_range = [datetime.now().date(), datetime.now().date() + timedelta(days=14)]
-    fig.add_trace(go.Scatter(x=dr_range, y=[v_l, v_l], name='매수선', line=dict(color='red', dash='dash')))
-    fig.add_trace(go.Scatter(x=dr_range, y=[v_u, v_u], name='매도선', line=dict(color='green', dash='dash')))
-    fig.add_trace(go.Scatter(x=dr_range, y=[v1, v1], name='목표V', line=dict(color='blue')))
-    fig.add_trace(go.Scatter(x=[datetime.now().date()], y=[m['price']*qty], marker=dict(color='orange', size=15), name='현재자산'))
-    fig.update_layout(height=400, title="밸류 리밸런싱 추적 그래프", template="plotly_white")
-    st.plotly_chart(fig, use_container_width=True)
+        l, r = st.columns(2)
+        with l:
+            st.markdown("#### 📉 매수 가이드")
+            if m['price']*qty < v_l:
+                if ok:
+                    st.write(f"가용 쿼터 {qta*100:.0f}% 적용")
+                    for i in range(1, 10):
+                        t_q = qty + i
+                        p = v_l / t_q
+                        # 1.05배 가격 상한선 (추격 매수 방지)
+                        if p < m['price'] * 1.05: st.code(f"LOC 매수 {p:.2f}$ ({t_q}주)")
+                else: st.error("🚫 FnG 안전장치 작동: 매수 금지")
+            else: st.success("✅ 현재 구간: 관망 (현금 보유)")
+
+        with r:
+            st.markdown("#### 📈 매도 가이드")
+            if m['price']*qty > v_u:
+                for i in range(1, 5):
+                    t_q = qty - i
+                    if t_q > 0:
+                        p = v1 / t_q
+                        if p > m['price']: st.code(f"LOC 매도 {p:.2f}$ ({qty-t_q}주 판매)")
+            else: st.success("✅ 현재 구간: 관망 (주식 보유)")
+
+        # 그래프 출력
+        st.divider()
+        fig = go.Figure()
+        dr_range = [datetime.now().date(), datetime.now().date() + timedelta(days=14)]
+        fig.add_trace(go.Scatter(x=dr_range, y=[v_l, v_l], name='매수선', line=dict(color='red', dash='dash')))
+        fig.add_trace(go.Scatter(x=dr_range, y=[v_u, v_u], name='매도선', line=dict(color='green', dash='dash')))
+        fig.add_trace(go.Scatter(x=dr_range, y=[v1, v1], name='목표V', line=dict(color='blue')))
+        fig.add_trace(go.Scatter(x=[datetime.now().date()], y=[m['price']*qty], marker=dict(color='orange', size=15), name='현재자산'))
+        fig.update_layout(height=400, title="밸류 리밸런싱 추적 그래프", template="plotly_white")
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ==========================================
+    # 탭 2: 로직 설명서 (기억용)
+    # ==========================================
+    with tab2:
+        st.markdown("### 🛡️ VR 5.0 지능형 로직 상세 명세")
+        st.info("이 탭은 과거의 내가 설계한 안전장치 로직을 까먹지 않기 위해 기록한 페이지입니다.")
+        
+        st.markdown("---")
+        
+        st.markdown("#### 1. 🚦 상황별 밴드폭 자동 조절 (Bull/Bear 판독기)")
+        st.markdown("""
+        * **의도:** 상승장엔 욕심내고, 하락장엔 몸을 사리기 위함.
+        * **🟩 상승장 (20%):** 나스닥 낙폭이 -10% 이내이고, 200일선 위에 있을 때. 수익 극대화.
+        * **🟧 조정장 (15%):** 나스닥이 -10% ~ -20% 사이일 때. 표준 방어 운전.
+        * **🟥 하락장 (10%):** 나스닥이 -20% 넘게 폭락했거나 200일선 붕괴 시. 반등 시 빨리 탈출하기 위해 밴드를 좁힘.
+        """)
+        
+        st.markdown("---")
+
+        st.markdown("#### 2. 💰 현금 쿼터(Quota) 제한 시스템")
+        st.markdown("""
+        * **의도:** 폭락장에서 현금을 다 써버리고 '바닥 밑 지하실' 구경하는 참사를 방지.
+        * **작동 방식:**
+            - **일반:** 제한 없음 (100% 매수 가능)
+            - **경고 단계:** 나스닥 -10%~-20% 구간에서는 현금의 **50%**만 사용 허용. (단, FnG 지수 15 이하면 허용)
+            - **위험 단계:** 나스닥 -20% 이하 구간에서는 현금의 **30%**만 사용 허용. (단, FnG 지수 10 이하면 허용)
+        """)
+
+        st.markdown("---")
+        
+        st.markdown("#### 3. 🧠 공포/탐욕 지수(FnG) 퓨즈")
+        st.markdown("""
+        * **의도:** "남들이 공포를 느낄 때 사라"는 격언을 수치화.
+        * **로직:** 하락장(-20% 이하)이라도 **FnG 지수가 10 이하(극도의 공포)**가 아니면 절대 매수하지 않음. 즉, '진짜 바닥' 신호가 올 때까지 강제로 매수 버튼을 잠금.
+        """)
+
 else:
     st.error("데이터 로드 중... 잠시만 기다려주세요.")
