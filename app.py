@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import requests
 
 # --- [0. 페이지 설정 및 데이터 엔진] ---
+# [수정됨] 탭 이름 변경: 지능형 관제탑 -> 투자 가이드
 st.set_page_config(page_title="TQQQ VR 5.0 투자 가이드", layout="wide")
 
 @st.cache_data(ttl=600)
@@ -80,7 +81,8 @@ def get_recommended_band(dd, is_bull):
     return 15, "⬜ 일반: 표준 밴드 15% 추천"
 
 # --- [2. 메인 화면 상단] ---
-st.title("🚀 TQQQ VR 5.0 지능형 관제탑")
+# [수정됨] 메인 타이틀 변경: 지능형 관제탑 -> 투자 가이드
+st.title("🚀 TQQQ VR 5.0 투자 가이드")
 
 with st.expander("🚨 필독: VR 5.0 시작 및 운영 매뉴얼", expanded=True):
     col_m1, col_m2 = st.columns(2)
