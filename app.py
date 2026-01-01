@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import requests
 
 # --- [0. 페이지 설정 및 데이터 엔진] ---
-st.set_page_config(page_title="TQQQ VR 5.0 지능형 관제탑", layout="wide")
+st.set_page_config(page_title="TQQQ VR 5.0 투자 가이드", layout="wide")
 
 @st.cache_data(ttl=600)
 def get_market_intelligence():
