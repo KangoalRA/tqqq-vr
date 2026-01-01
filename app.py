@@ -70,14 +70,25 @@ with st.expander("🚨 필독: VR 5.0 시작 및 운영 매뉴얼", expanded=Tru
         * **저장:** 입력 후 반드시 **[구글 시트에 저장]** 버튼 클릭.
         """)
 
-# --- [3. 사이드바 및 입력부: 구글 시트 연동] ---
+# --- [3. 사이드바 및 입력부: 순서 변경됨] ---
 if m and m["price"] > 0:
     with st.sidebar:
+        # 1. 시장 지표 (맨 위)
         st.header("⚙️ 시장 지표 및 설정")
         st.metric("나스닥 낙폭", f"{m['dd']}%")
         fng_input = st.number_input("FnG Index", value=float(m['fng']))
         
         st.divider()
+        
+        # 2. 밴드폭 추천 (여기로 위로 올림!)
+        st.subheader("🛠️ 밴드폭 추천")
+        rec_val, rec_msg = get_recommended_band(m['dd'], m['bull'])
+        st.info(rec_msg)
+        band_pct = st.slider("밴드 설정 (%)", 5, 30, rec_val) / 100
+        
+        st.divider()
+        
+        # 3. 자산 데이터 입력 및 저장 (아래로 내림)
         st.subheader("💾 자산 데이터 (Google Cloud)")
         
         # 구글 시트 연결
@@ -117,14 +128,8 @@ if m and m["price"] > 0:
         # 저장 버튼
         if st.button("💾 구글 시트에 저장"):
             new_data = pd.DataFrame([{"Qty": qty, "Pool": pool, "V_old": v_to_save}])
-            # 기존 데이터 날리고 덮어쓰기 (히스토리 원하면 append 모드로 변경 가능하지만 단순화 위해 덮어쓰기)
             conn.update(worksheet="Sheet1", data=new_data)
             st.success("✅ 클라우드 저장 완료!")
-
-        st.divider()
-        rec_val, rec_msg = get_recommended_band(m['dd'], m['bull'])
-        st.info(rec_msg)
-        band_pct = st.slider("밴드 설정 (%)", 5, 30, rec_val) / 100
 
     # 계산 데이터
     v_l, v_u = v1 * (1-band_pct), v1 * (1+band_pct)
