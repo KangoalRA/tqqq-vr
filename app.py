@@ -78,17 +78,19 @@ with st.expander("🚨 필독: VR 5.0 시작 및 운영 매뉴얼", expanded=Fal
 
 if m and m["price"] > 0:
     with st.sidebar:
-        # 1. 시장 지표
+        # 1. 시장 지표 (링크 추가됨, 중복 제거됨)
         st.header("⚙️ 시장 지표")
         st.metric("나스닥 낙폭", f"{m['dd']}%")
-        fng_input = st.number_input("FnG Index", value=float(m['fng']))
-
-        # ▼ [여기] 이 코드를 추가하세요! ▼
-        st.markdown("[👉 FnG 지수 공식 사이트 (CNN)](https://edition.cnn.com/markets/fear-and-greed)")
-        # ▲ --------------------------- ▲
         
+        # [CNN 링크 추가]
+        st.markdown("[👉 FnG 지수 공식 사이트 (CNN)](https://edition.cnn.com/markets/fear-and-greed)")
+        
+        # [FnG 입력칸 - 딱 한 번만 등장]
         fng_input = st.number_input("FnG Index", value=float(m['fng']))
+        
         st.divider()
+        
+        # 2. 밴드폭 추천 (위로 올림)
         st.subheader("🛠️ 밴드폭 추천")
         rec_val, rec_msg = get_recommended_band(m['dd'], m['bull'])
         st.info(rec_msg)
@@ -96,7 +98,7 @@ if m and m["price"] > 0:
         
         st.divider()
         
-        # 2. 자산 데이터 (수익률 기능 포함)
+        # 3. 자산 데이터 (수익률 기능 포함)
         st.subheader("💾 자산 데이터 (Google Cloud)")
         conn = st.connection("gsheets", type=GSheetsConnection)
         
@@ -104,14 +106,13 @@ if m and m["price"] > 0:
         default_qty, default_pool, default_v, default_principal = 100, 2000.0, m['price']*100, 5000.0
         
         try:
-            # 시트에서 데이터 읽어오기 (수량, 현금, V값, 원금)
+            # 시트에서 데이터 읽어오기
             existing_data = conn.read(worksheet="Sheet1", usecols=[0, 1, 2, 3], ttl=0).dropna()
             if not existing_data.empty:
                 last_row = existing_data.iloc[-1]
                 default_qty = int(last_row.iloc[0])
                 default_pool = float(last_row.iloc[1])
                 default_v = float(last_row.iloc[2])
-                # 원금 컬럼이 있으면 가져옴
                 if len(last_row) > 3: default_principal = float(last_row.iloc[3])
                 st.success(f"☁️ 데이터 로드 완료")
         except:
@@ -134,13 +135,11 @@ if m and m["price"] > 0:
             cur = st.radio("리필 통화", ["원화", "달러"], horizontal=True)
             add = (st.number_input("리필(원)", value=0)/m['fx']) if cur=="원화" else st.number_input("리필($)", value=0.0)
             v1 += add
-            # 리필 시 원금 자동 증가 (약식)
             if cur == "원화" and add > 0: principal += (add * m['fx'] / m['fx']) 
             elif add > 0: principal += add
 
         # 저장 버튼
         if st.button("💾 구글 시트에 저장"):
-            # 원금(Principal)까지 포함해서 저장
             new_data = pd.DataFrame([{"Qty": qty, "Pool": pool, "V_old": v_to_save, "Principal": principal}])
             conn.update(worksheet="Sheet1", data=new_data)
             st.success("✅ 클라우드 저장 완료!")
@@ -157,7 +156,7 @@ if m and m["price"] > 0:
     # --- [메인 대시보드] ---
     st.subheader(f"📈 실시간 가이드 (TQQQ: ${m['price']})")
     
-    # 수익률 표시줄 (New!)
+    # 수익률 표시줄
     col_roi1, col_roi2, col_roi3 = st.columns(3)
     col_roi1.metric("총 투입 원금", f"${principal:,.0f}")
     col_roi2.metric("현재 총 자산", f"${current_asset:,.0f}", delta=f"{roi_val:,.0f} $")
@@ -167,7 +166,7 @@ if m and m["price"] > 0:
 
     tab1, tab2 = st.tabs(["📊 메인 대시보드", "📘 안전장치 설명서"])
 
-    telegram_msg = "" # 텔레그램 메시지 담을 변수
+    telegram_msg = "" 
 
     with tab1:
         if m_type == "normal": st.success(msg)
@@ -221,7 +220,7 @@ if m and m["price"] > 0:
                 telegram_msg += "😴 매도 없음 (관망)\n"
 
         st.divider()
-        # 텔레그램 전송 버튼 (New!)
+        # 텔레그램 전송 버튼
         if st.button("✈️ 텔레그램으로 이 리포트 전송하기"):
             send_telegram_msg(telegram_msg)
 
