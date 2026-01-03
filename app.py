@@ -71,12 +71,12 @@ if m and m["price"] > 0:
     with st.sidebar:
         st.header("⚙️ VR 설정")
         
-        # 1. G값 (밴드값) 설정 - 여기로 뺐습니다!
-        st.subheader("1. G값(밴드) 설정")
+        # 1. 밴드폭 설정 (수정됨: G값 오기 수정)
+        st.subheader("1. 밴드폭(Band) 설정")
         rec_val, rec_msg = get_recommended_band(m['dd'], m['bull'])
         st.caption(rec_msg)
-        # 10~40 범위 고정
-        band_pct = st.slider("G값 (밴드폭 %)", 10, 40, rec_val) / 100
+        # 용어 수정: G값 -> 밴드폭
+        band_pct = st.slider("밴드폭 설정 (%)", 10, 40, rec_val) / 100
 
         st.divider()
 
@@ -112,7 +112,7 @@ if m and m["price"] > 0:
 
         mode = st.radio("모드 선택", ["사이클 업데이트", "최초 시작"])
         
-        # 공통 입력 (수량, 풀은 변동될 수 있으니 입력 가능하게 유지하되 기본값은 로드된 값)
+        # 공통 입력
         qty = st.number_input("현재 보유 수량 (주)", value=default_qty, min_value=1)
         pool = st.number_input("현재 현금 Pool ($)", value=default_pool)
         
@@ -122,7 +122,7 @@ if m and m["price"] > 0:
             v1 = m['price'] * qty
             v_to_save = v1 
         else:
-            # [수정된 부분] V값은 시트에서 가져온 값으로 고정 (disabled=True)
+            # [수정된 부분] V값은 시트에서 가져온 값으로 고정
             st.markdown(f"**직전 V값: ${default_v:,.2f}** (자동 적용)")
             v_old = default_v 
             
@@ -134,16 +134,18 @@ if m and m["price"] > 0:
             if cur == "원화":
                 add_krw = st.number_input("입금액 (원)", value=0)
                 add_val = add_krw / m['fx']
-                principal += add_krw # 원화 기준 원금 더하기 (단순화)
+                principal += add_krw
             elif cur == "달러":
                 add_usd = st.number_input("입금액 ($)", value=0.0)
                 add_val = add_usd
-                principal += (add_usd * m['fx']) # 달러를 원화 환산해서 원금에 더하기
+                principal += (add_usd * m['fx'])
 
-            v1 = v_old + add_val # V값 갱신 (리필만 반영)
+            # 여기서 G값(성장)은 사실 숨겨져 있습니다. 
+            # (V_new = V_old + 리필액 + G성장분) 인데, 
+            # 편의상 리필액만 더하는 구조로 되어있습니다. (순수 VR은 이 부분 로직이 더 복잡함)
+            v1 = v_old + add_val 
             v_to_save = v1
             
-            # 리필액이 있다면 Pool에도 더해줌 (사용자 편의)
             if add_val > 0:
                 st.info(f"💡 리필액 ${add_val:,.2f}이 V값에 반영되었습니다.")
 
@@ -165,7 +167,6 @@ if m and m["price"] > 0:
     
     # 수익률
     current_asset_usd = (m['price'] * qty) + pool
-    # 원금은 원화로 저장되어 있다고 가정하고, 현재 자산도 원화로 환산해서 비교 (더 정확함)
     current_asset_krw = current_asset_usd * m['fx']
     roi_val_krw = current_asset_krw - principal
     roi_pct = (roi_val_krw / principal) * 100 if principal > 0 else 0
@@ -185,7 +186,6 @@ if m and m["price"] > 0:
     telegram_msg = "" 
 
     with tab1:
-        # 상태 메시지 표시
         if m_type == "normal": st.success(msg)
         elif m_type == "warning": st.warning(msg)
         else: st.error(msg)
@@ -194,7 +194,7 @@ if m and m["price"] > 0:
         telegram_msg += f"[VR 5.0 리포트]\n📅 {datetime.now().strftime('%Y-%m-%d')}\n"
         telegram_msg += f"TQQQ: ${m['price']} (FnG: {int(fng_input)})\n"
         telegram_msg += f"상태: {msg}\n"
-        telegram_msg += f"G값(밴드): {int(band_pct*100)}%\n"
+        telegram_msg += f"밴드폭: {int(band_pct*100)}%\n" # 용어 수정
         telegram_msg += f"수익률: {roi_pct:.2f}% ({roi_val_krw/10000:.0f}만원)\n\n"
 
         col_v1, col_v2, col_v3 = st.columns(3)
@@ -205,18 +205,15 @@ if m and m["price"] > 0:
         st.divider()
         l, r = st.columns(2)
         
-        # 매수 가이드
         with l:
             st.markdown("#### 📉 매수 (Buy)")
             if m['price']*qty < v_l:
                 if ok:
                     st.write(f"✅ 가용 현금 쿼터: {qta*100:.0f}%")
                     telegram_msg += "📉 [매수 추천]\n"
-                    # 지정가(LOC) 계산
                     for i in range(1, 10):
                         t_q = qty + i
                         p = v_l / t_q
-                        # 현재가보다 너무 높지 않은 범위(5%) 내에서만 추천
                         if p < m['price'] * 1.05:
                             guide_text = f"LOC 매수: {p:.2f}$ ({t_q}주)"
                             st.code(guide_text)
@@ -228,7 +225,6 @@ if m and m["price"] > 0:
                 st.info("😴 관망 (매수 구간 아님)")
                 telegram_msg += "😴 매수 없음 (관망)\n"
 
-        # 매도 가이드
         with r:
             st.markdown("#### 📈 매도 (Sell)")
             if m['price']*qty > v_u:
@@ -249,7 +245,6 @@ if m and m["price"] > 0:
         if st.button("✈️ 텔레그램 전송"):
             send_telegram_msg(telegram_msg)
 
-        # 그래프
         fig = go.Figure()
         dr_range = [datetime.now().date(), datetime.now().date() + timedelta(days=14)]
         fig.add_trace(go.Scatter(x=dr_range, y=[v_l, v_l], name='매수선(Min)', line=dict(color='red', dash='dash')))
@@ -262,10 +257,9 @@ if m and m["price"] > 0:
     with tab2:
         st.markdown("""
         ### 🛡️ VR 5.0 로직
-        **1. G값(밴드폭) 유동성**
-        * 평시: 15%
-        * 상승장: 20% (적극적 이익 실현)
-        * 하락장: 10% (빠른 방어 매수)
+        **1. 밴드폭 (Bandwidth)**
+        * V값을 기준으로 위아래 벌어지는 폭을 의미합니다. (이 폭을 뚫어야 매매가 일어남)
+        * 평시: 15%, 상승장: 20%, 하락장: 10% 추천
         
         **2. FnG 안전장치**
         * 조정장(-10%~): FnG 15 이하시 매수
