@@ -48,7 +48,6 @@ def get_market_intelligence():
 
 m = get_market_intelligence()
 
-# VR 5.0 안전장치
 def check_safety(dd, fng):
     if dd > -10: return True, 1.0, "🟩 정상장: 쿼터 100%", "normal"
     elif -20 < dd <= -10:
@@ -71,7 +70,6 @@ if m and m["price"] > 0:
     with st.sidebar:
         st.header("⚙️ VR 설정")
         
-        # 1. 밴드폭 설정
         st.subheader("1. 밴드폭(Band) 설정")
         rec_val, rec_msg = get_recommended_band(m['dd'], m['bull'])
         st.caption(rec_msg)
@@ -79,7 +77,6 @@ if m and m["price"] > 0:
 
         st.divider()
 
-        # 2. 시장 데이터
         st.subheader("2. 시장 데이터")
         st.metric("나스닥 낙폭", f"{m['dd']}%")
         st.markdown("[👉 FnG 확인 (CNN)](https://edition.cnn.com/markets/fear-and-greed)")
@@ -87,21 +84,19 @@ if m and m["price"] > 0:
         
         st.divider()
         
-        # 3. 내 자산 데이터 (Google Sheets)
         st.subheader("3. 자산 데이터")
         conn = st.connection("gsheets", type=GSheetsConnection)
         
-        # 변수 초기화
         loaded = False
         default_qty, default_pool, default_v, default_principal = 100, 2000.0, m['price']*100, 5000.0
-        last_date = "-" # 마지막 저장 날짜 표시용
+        last_date = "-"
+        
+        # [데이터프레임 전역 변수 선언]
+        df = pd.DataFrame() 
         
         try:
-            # 넉넉하게 읽어오기 (A~F열 이상)
             df = conn.read(worksheet="Sheet1", ttl=0)
-            
             if not df.empty:
-                # 필수 4개 열(A,B,C,D)이 있는 행만 유효하다고 판단
                 last_row = df.dropna(subset=df.columns[:4]).iloc[-1]
                 
                 default_qty = int(last_row.iloc[0])
@@ -109,11 +104,9 @@ if m and m["price"] > 0:
                 default_v = float(last_row.iloc[2])
                 if len(last_row) > 3: default_principal = float(last_row.iloc[3])
                 
-                # E열: 날짜
                 if len(last_row) > 4 and pd.notna(last_row.iloc[4]):
                     last_date = str(last_row.iloc[4])
                 
-                # F열: FnG
                 saved_fng = "-"
                 if len(last_row) > 5 and pd.notna(last_row.iloc[5]):
                     saved_fng = str(last_row.iloc[5])
@@ -154,18 +147,25 @@ if m and m["price"] > 0:
             if add_val > 0:
                 st.info(f"💡 리필액 ${add_val:,.2f} 반영됨")
 
-        # 저장 버튼 (E열 날짜, F열 FnG 추가)
+        # [수정된 저장 로직] : 기존 df에 새 행을 붙여서 저장 (Append 방식)
         if st.button("💾 구글 시트에 저장"):
-            new_data = pd.DataFrame([{
+            new_row = pd.DataFrame([{
                 "Qty": qty, 
                 "Pool": pool, 
                 "V_old": v_to_save, 
                 "Principal": principal,
-                "Date": datetime.now().strftime('%Y-%m-%d'), # E열: 오늘 날짜
-                "FnG": fng_input # F열: 현재 FnG
+                "Date": datetime.now().strftime('%Y-%m-%d'),
+                "FnG": fng_input
             }])
-            conn.update(worksheet="Sheet1", data=new_data)
-            st.success("✅ 저장 완료! (E열:날짜, F열:FnG 기록됨)")
+            
+            # 기존 데이터가 있으면 합치고, 없으면 새것만 씀
+            if not df.empty:
+                updated_df = pd.concat([df, new_row], ignore_index=True)
+            else:
+                updated_df = new_row
+                
+            conn.update(worksheet="Sheet1", data=updated_df)
+            st.success("✅ 저장 완료! (기존 내역 아래에 추가됨)")
 
     # 계산 로직
     v_l, v_u = v1 * (1-band_pct), v1 * (1+band_pct)
