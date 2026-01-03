@@ -87,34 +87,39 @@ if m and m["price"] > 0:
         st.subheader("3. 자산 데이터")
         conn = st.connection("gsheets", type=GSheetsConnection)
         
-        loaded = False
         default_qty, default_pool, default_v, default_principal = 100, 2000.0, m['price']*100, 5000.0
-        last_date = "-"
+        last_date, saved_fng = "-", "-"
         
-        # [데이터프레임 전역 변수 선언]
-        df = pd.DataFrame() 
-        
+        # [핵심 수정 1] 데이터프레임 로드 시 에러 방지 처리
+        df = pd.DataFrame()
         try:
             df = conn.read(worksheet="Sheet1", ttl=0)
-            if not df.empty:
-                last_row = df.dropna(subset=df.columns[:4]).iloc[-1]
+            # 데이터가 있고, 필수 컬럼(최소 1개 이상)이 있을 때만 처리
+            if not df.empty and len(df.columns) >= 4:
+                # 마지막 행 가져오기
+                last_row = df.iloc[-1]
                 
-                default_qty = int(last_row.iloc[0])
-                default_pool = float(last_row.iloc[1])
-                default_v = float(last_row.iloc[2])
-                if len(last_row) > 3: default_principal = float(last_row.iloc[3])
+                # 값 파싱 (에러나면 기본값 유지)
+                try: default_qty = int(last_row.iloc[0])
+                except: pass
+                try: default_pool = float(last_row.iloc[1])
+                except: pass
+                try: default_v = float(last_row.iloc[2])
+                except: pass
+                try: default_principal = float(last_row.iloc[3])
+                except: pass
                 
-                if len(last_row) > 4 and pd.notna(last_row.iloc[4]):
+                # E열(날짜), F열(FnG) 확인
+                if len(df.columns) > 4:
                     last_date = str(last_row.iloc[4])
-                
-                saved_fng = "-"
-                if len(last_row) > 5 and pd.notna(last_row.iloc[5]):
+                if len(df.columns) > 5:
                     saved_fng = str(last_row.iloc[5])
                 
-                st.success(f"✅ 로드됨 ({last_date} / FnG: {saved_fng})")
-                loaded = True
+                st.success(f"✅ 로드됨 (Date: {last_date})")
+            else:
+                st.info("ℹ️ 기존 데이터 없음 (신규 시작)")
         except Exception as e:
-            st.warning(f"⚠️ 데이터 로드 실패 또는 신규: {e}")
+            st.warning(f"⚠️ 데이터 로드 실패 (초기화 상태): {e}")
 
         mode = st.radio("모드 선택", ["사이클 업데이트", "최초 시작"])
         
@@ -147,8 +152,9 @@ if m and m["price"] > 0:
             if add_val > 0:
                 st.info(f"💡 리필액 ${add_val:,.2f} 반영됨")
 
-        # [수정된 저장 로직] : 기존 df에 새 행을 붙여서 저장 (Append 방식)
+        # [핵심 수정 2] 저장 시 NaN(빈값) 제거 및 기존 컬럼 맞춤
         if st.button("💾 구글 시트에 저장"):
+            # 새 데이터
             new_row = pd.DataFrame([{
                 "Qty": qty, 
                 "Pool": pool, 
@@ -158,14 +164,19 @@ if m and m["price"] > 0:
                 "FnG": fng_input
             }])
             
-            # 기존 데이터가 있으면 합치고, 없으면 새것만 씀
+            # 기존 데이터와 합치기
             if not df.empty:
+                # 컬럼 이름 통일 (혹시 모를 헤더 불일치 방지)
+                # 만약 기존 df에 'Date' 컬럼이 없으면 concat 과정에서 생김 -> NaN 발생
                 updated_df = pd.concat([df, new_row], ignore_index=True)
+                
+                # *** 가장 중요 ***: NaN을 빈 문자열이나 0으로 채워야 에러 안 남
+                updated_df = updated_df.fillna("") 
             else:
                 updated_df = new_row
-                
+            
             conn.update(worksheet="Sheet1", data=updated_df)
-            st.success("✅ 저장 완료! (기존 내역 아래에 추가됨)")
+            st.success("✅ 저장 완료! (누적 기록됨)")
 
     # 계산 로직
     v_l, v_u = v1 * (1-band_pct), v1 * (1+band_pct)
