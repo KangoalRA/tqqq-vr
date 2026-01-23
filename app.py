@@ -59,8 +59,13 @@ with st.sidebar:
         df = conn.read(worksheet="Sheet1", ttl=0)
         if not df.empty:
             row = df.iloc[-1]
-            last_v = float(str(row.get("V_old", 0)).replace(',',''))
-            last_princ = float(str(row.get("Principal", 0)).replace(',',''))
+            # [수정] 데이터를 가져올 때 안전하게 숫자로 변환
+            def safe_float(x):
+                try: return float(str(x).replace(',',''))
+                except: return 0.0
+            
+            last_v = safe_float(row.get("V_old", 0))
+            last_princ = safe_float(row.get("Principal", 0))
     except: pass
 
     mode = st.radio("작업 선택", ["사이클 업데이트", "최초 시작"], horizontal=True)
@@ -131,16 +136,24 @@ with tab1:
         else: st.info("보유량 없음")
 
 with tab2:
-    # 1. 데이터 준비 (가상 데이터 생성 X, 순수 데이터만 사용)
+    # 1. 데이터 준비
     c_df = df.copy() if not df.empty else pd.DataFrame()
-    if not c_df.empty: c_df['Date'] = pd.to_datetime(c_df['Date'])
     
-    # 현재 시점 데이터 (화면 표시용)
-    now_date = datetime.now()
+    # [핵심 1] 날짜에서 '시간' 제거하여 날짜끼리만 비교되게 함 (중복 방지)
+    if not c_df.empty: 
+        c_df['Date'] = pd.to_datetime(c_df['Date']).dt.normalize()
+        # 숫자 컬럼 강제 변환 (문자열 '60' 등이 섞여있을 경우 방지)
+        for col in ['V_old', 'Band', 'Qty', 'Price']:
+            if col in c_df.columns:
+                c_df[col] = pd.to_numeric(c_df[col], errors='coerce').fillna(0)
+
+    # 현재 데이터 생성 (시간 제거)
+    now_date = pd.to_datetime(datetime.now().date())
     now_df = pd.DataFrame([{
         "Date": now_date, "V_old": v_final, "Qty": qty, "Price": curr_p, "Band": int(b_pct*100)
     }])
     
+    # 합치기 및 중복 제거
     plot_df = pd.concat([c_df, now_df], ignore_index=True)
     plot_df = plot_df.drop_duplicates(subset=['Date'], keep='last').sort_values('Date')
     
@@ -149,10 +162,11 @@ with tab2:
     plot_df["하단"] = plot_df["V_old"] * (1 - plot_df["Band"]/100.0)
     plot_df["자산"] = plot_df["Qty"] * plot_df["Price"]
     
-    # 3. Y축 타이트 스케일 계산
+    # [핵심 2] 자산이 0원인 데이터(초기값 오류 등)는 차트에서 아예 빼버림 -> 수직 상승선 방지
+    plot_df = plot_df[plot_df["자산"] > 0]
+
+    # 3. Y축 스케일 계산
     valid_vals = pd.concat([plot_df["상단"], plot_df["하단"], plot_df["자산"]])
-    valid_vals = valid_vals[valid_vals > 0]
-    
     y_range = None
     if not valid_vals.empty:
         y_min_real, y_max_real = valid_vals.min(), valid_vals.max()
@@ -161,54 +175,59 @@ with tab2:
 
     # 4. 차트 그리기
     fig = go.Figure()
-    
-    # [핵심 변경] 선을 오른쪽으로 연장하기 위한 좌표 설정
-    # 마지막 데이터 포인트
-    last_date = plot_df['Date'].max()
-    last_v = plot_df['V_old'].iloc[-1]
-    last_top = plot_df['상단'].iloc[-1]
-    last_bottom = plot_df['하단'].iloc[-1]
-    
-    # 미래 시점 (60일 뒤) 좌표 (시각적 연장용)
-    future_date = last_date + timedelta(days=60)
-    
-    # 4-1. 밴드 (과거~현재)
-    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['상단'], mode='lines', line=dict(color='#00FF00', width=1.5), name='Band Top', showlegend=True))
-    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['하단'], mode='lines', line=dict(color='#00FF00', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='Band Bottom', showlegend=True))
-    # 4-2. 밴드 (현재~미래 연장선) -> 데이터 없이 그림만 그림
-    fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_top, last_top], mode='lines', line=dict(color='#00FF00', width=1.5, dash='solid'), showlegend=False, hoverinfo='skip'))
-    fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_bottom, last_bottom], mode='lines', line=dict(color='#00FF00', width=1.5, dash='solid'), showlegend=False, hoverinfo='skip'))
 
-    # 4-3. 목표 V (과거~현재)
-    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['V_old'], mode='lines', line=dict(color='#00BFFF', width=2, dash='dot'), name='Target V', showlegend=True))
-    # 4-4. 목표 V (현재~미래 연장선)
-    fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_v, last_v], mode='lines', line=dict(color='#00BFFF', width=2, dash='dot'), showlegend=False, hoverinfo='skip'))
-    
-    # 4-5. 내 자산 (과거~현재만 표시, 미래 연장 X)
-    mode_set = 'markers' if len(plot_df) == 1 else 'lines+markers'
-    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['자산'], 
-                             line=dict(color='#FFFF00', width=3), 
-                             marker=dict(size=8, color='#FFFF00'), 
-                             mode=mode_set, name='My Asset'))
-    
-    # 5. X축 설정
-    xaxis_config = dict(
-        showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
-        tickformat='%y-%m-%d',
-        range=[plot_df['Date'].min() - timedelta(hours=12), future_date] # 시작점~미래시점까지 뷰 고정
-    )
+    # 미래 연장선 좌표 계산
+    if not plot_df.empty:
+        last_date = plot_df['Date'].max()
+        last_v = plot_df['V_old'].iloc[-1]
+        last_top = plot_df['상단'].iloc[-1]
+        last_bottom = plot_df['하단'].iloc[-1]
+        future_date = last_date + timedelta(days=60)
 
-    fig.update_layout(
-        height=500,
-        paper_bgcolor='rgba(0,0,0,0)', 
-        plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=10, r=10, t=30, b=10),
-        xaxis=xaxis_config,
-        yaxis=dict(
+        # 밴드 (과거~현재)
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['상단'], mode='lines', line=dict(color='#00FF00', width=1.5), name='Band Top', showlegend=True))
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['하단'], mode='lines', line=dict(color='#00FF00', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='Band Bottom', showlegend=True))
+        # 밴드 (미래 연장)
+        fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_top, last_top], mode='lines', line=dict(color='#00FF00', width=1.5, dash='solid'), showlegend=False, hoverinfo='skip'))
+        fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_bottom, last_bottom], mode='lines', line=dict(color='#00FF00', width=1.5, dash='solid'), showlegend=False, hoverinfo='skip'))
+
+        # 목표 V (과거~현재)
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['V_old'], mode='lines', line=dict(color='#00BFFF', width=2, dash='dot'), name='Target V', showlegend=True))
+        # 목표 V (미래 연장)
+        fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_v, last_v], mode='lines', line=dict(color='#00BFFF', width=2, dash='dot'), showlegend=False, hoverinfo='skip'))
+        
+        # 내 자산 (과거~현재만)
+        mode_set = 'markers' if len(plot_df) == 1 else 'lines+markers'
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['자산'], 
+                                 line=dict(color='#FFFF00', width=3), 
+                                 marker=dict(size=8, color='#FFFF00'), 
+                                 mode=mode_set, name='My Asset'))
+        
+        # X축 범위 설정
+        min_date = plot_df['Date'].min()
+        xaxis_config = dict(
             showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
-            range=y_range, 
-            fixedrange=False
-        ),
-        legend=dict(orientation="h", y=1.05, x=1, xanchor="right")
-    )
-    st.plotly_chart(fig, use_container_width=True)
+            tickformat='%y-%m-%d',
+            range=[min_date - timedelta(hours=12), future_date] # 시작점 딱 맞춤
+        )
+        
+        # 오늘 처음이라 데이터가 1개뿐일 때 시각 보정
+        if len(plot_df) == 1:
+             xaxis_config['range'] = [min_date - timedelta(days=2), min_date + timedelta(days=30)]
+
+        fig.update_layout(
+            height=500,
+            paper_bgcolor='rgba(0,0,0,0)', 
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=10, r=10, t=30, b=10),
+            xaxis=xaxis_config,
+            yaxis=dict(
+                showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
+                range=y_range, 
+                fixedrange=False
+            ),
+            legend=dict(orientation="h", y=1.05, x=1, xanchor="right")
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("데이터가 없습니다. 데이터를 저장해주세요.")
