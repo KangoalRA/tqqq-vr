@@ -7,7 +7,7 @@ import requests
 from streamlit_gsheets import GSheetsConnection
 
 # --- [0. 기본 설정] ---
-st.set_page_config(page_title="TQQQ VR 5.0 Pro", layout="wide")
+st.set_page_config(page_title="TQQQ VR 5.0 Pool Ver", layout="wide")
 
 # 텔레그램 메시지 전송
 def send_telegram_msg(msg):
@@ -24,10 +24,10 @@ def send_telegram_msg(msg):
     except Exception as e:
         st.error(f"텔레그램 전송 오류: {e}")
 
-# 데이터 가져오기 (실패 시 기본값 반환)
+# 데이터 가져오기
 @st.cache_data(ttl=300)
 def get_market_intelligence():
-    data = {"price": 0.0, "fx": 1400.0, "dd": 0.0, "fng": 50.0, "bull": True, "error": None}
+    data = {"price": 0.0, "fx": 1400.0, "dd": 0.0, "fng": 50.0, "error": None}
     try:
         # TQQQ 가격
         t_hist = yf.Ticker("TQQQ").history(period="5d")
@@ -36,20 +36,19 @@ def get_market_intelligence():
         else:
             data["error"] = "TQQQ 데이터 로드 실패"
         
-        # 나스닥
+        # 나스닥 DD (참고용으로 유지)
         n_hist = yf.Ticker("^NDX").history(period="2y")
         if not n_hist.empty:
             ndx_high = n_hist['Close'].max()
             curr_ndx = n_hist['Close'].iloc[-1]
             data["dd"] = round((curr_ndx / ndx_high - 1) * 100, 2)
-            data["bull"] = curr_ndx > n_hist['Close'].rolling(window=200).mean().iloc[-1]
         
         # 환율
         fx_hist = yf.Ticker("USDKRW=X").history(period="1d")
         if not fx_hist.empty: 
             data["fx"] = round(fx_hist['Close'].iloc[-1], 2)
 
-        # 공포지수
+        # 공포지수 (참고용으로 유지)
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             r = requests.get("https://production.dataviz.cnn.io/index/fearandgreed/static/history", headers=headers, timeout=3)
@@ -64,45 +63,44 @@ def get_market_intelligence():
 
 m = get_market_intelligence()
 
-# --- [UI 강제 표시 로직] ---
-# 데이터를 못 가져왔어도 UI는 무조건 그리도록 구조 변경
-st.title("🚀 TQQQ VR 5.0 Pro")
+# --- [UI 타이틀] ---
+st.title("🌊 TQQQ VR 5.0 (Pool Version)")
 
-# 에러가 있거나 가격이 0원이면 수동 모드로 전환 경고
 if m["price"] == 0 or m["error"]:
-    st.warning(f"⚠️ 시장 데이터를 자동으로 가져오지 못했습니다. (원인: {m.get('error', 'API 연결 실패')}) -> 수동 입력값을 사용합니다.")
+    st.warning(f"⚠️ 시장 데이터 로드 실패 ({m.get('error')}). 수동 입력을 사용하세요.")
 
 # --- [사이드바 설정] ---
 with st.sidebar:
-    st.header("⚙️ 기본 설정")
+    st.header("⚙️ 전략 설정")
     
-    # G값 & 밴드
-    g_factor = st.slider("1. G값 (성장 속도)", 10, 40, 10, help="낮을수록(10) 공격적, 높을수록(40) 보수적")
-    band_pct = st.slider("2. 밴드폭 (%)", 5, 30, 15) / 100
+    # 투자 성향 (Pool 한도 결정)
+    invest_type = st.radio("투자 성향 (Pool 사용 한도)", ["적립식 (월급형, 75%)", "거치식 (목돈형, 50%)"])
+    pool_cap_ratio = 0.75 if "적립식" in invest_type else 0.50
+    
+    st.divider()
+
+    # G값
+    g_factor = st.number_input("G값 (나누기 변수)", value=10, min_value=1, help="기본값 10. Pool을 이 값으로 나눈 만큼 V가 성장함.")
 
     st.divider()
 
-    # 시장 데이터 (자동 실패시 수동 입력 가능하게 변경)
-    st.subheader("3. 시장 데이터 (수동 수정 가능)")
-    
-    # 가격이 0이면 기본값 0.0 대신 사용자가 입력하게 유도
+    # 시장 데이터 수동 입력
+    st.subheader("📝 시장 데이터 (수동)")
     price_val = m["price"] if m["price"] > 0 else 0.0
     current_price = st.number_input("TQQQ 현재가 ($)", value=price_val, format="%.2f")
     
+    # 참고용 지표 (로직엔 영향 X)
     mdd_val = st.number_input("나스닥 MDD (%)", value=m["dd"], format="%.2f")
-    fng_val = st.number_input("FnG 지수 (0~100)", value=float(m["fng"]))
+    fng_val = st.number_input("FnG 지수", value=float(m["fng"]))
     fx_val = st.number_input("환율 (원/$)", value=m["fx"])
     
-    # 데이터 덮어쓰기 (사용자 입력값 우선)
     m["price"] = current_price
-    m["dd"] = mdd_val
-    m["fng"] = fng_val
     m["fx"] = fx_val
 
     st.divider()
     
     # 구글 시트 로드
-    st.subheader("4. 자산 데이터")
+    st.subheader("📂 자산 데이터")
     conn = st.connection("gsheets", type=GSheetsConnection)
     
     df = pd.DataFrame()
@@ -126,62 +124,47 @@ with st.sidebar:
         else:
             st.info("ℹ️ 데이터 없음 (신규)")
     except:
-        st.warning("⚠️ 시트 연결 실패 (설정 확인 필요)")
+        st.warning("⚠️ 시트 연결 실패")
 
-    mode = st.radio("모드", ["사이클 업데이트", "최초 시작"])
+    mode = st.radio("모드 선택", ["사이클 업데이트 (2주 1회)", "최초 시작"])
     
     qty = st.number_input("보유 수량 (주)", value=default_qty, min_value=0)
     pool = st.number_input("현금 Pool ($)", value=default_pool)
 
-    # 계산 로직
+    # --- [핵심 계산 로직: VR 5.0 Pool형] ---
     v_final = 0.0
     principal_final = default_principal
     
-    # 최초 시작 모드
     if mode == "최초 시작":
         principal_final = st.number_input("총 투입 원금 ($)", value=default_principal)
         if current_price > 0:
             v_final = current_price * qty
         else:
-            st.error("현재가를 입력해야 V값 계산이 됩니다.")
             v_final = 0
             
-    # 업데이트 모드
-    else:
+    else: # 사이클 업데이트
         v_old = default_v
         st.markdown(f"**직전 V: ${v_old:,.2f}**")
         
-        cur = st.radio("리필(적립)", ["없음", "원화", "달러"], horizontal=True)
+        # 적립금 추가
+        cur = st.radio("적립금 리필", ["없음", "원화", "달러"], horizontal=True)
         add_val = 0.0
         if cur == "원화":
             add_krw = st.number_input("입금액 (원)", value=0)
             add_val = add_krw / fx_val if fx_val > 0 else 0
-            principal_final += add_krw
+            principal_final += (add_krw / fx_val) # 원금 $환산 합산
         elif cur == "달러":
             add_usd = st.number_input("입금액 ($)", value=0.0)
             add_val = add_usd
-            principal_final += (add_usd * fx_val)
+            principal_final += add_usd
         
-        # 성장 로직 (G값 적용)
-        if v_old > 0 and pool > 0:
-            # 공식: (Pool/V) / (G/10)
-            base_growth = (pool / v_old) / (g_factor / 10.0) / 10.0 
-            # 단순화된 요청 공식: (Pool/V) / G 로 변환하여 적용
-            # 사용자 요청: 10~40으로 나눈다.
-            # Pool비중 = Pool / V
-            # 성장률 = Pool비중 / G
-            target_growth_rate = (pool / v_old) / g_factor
-            
-            # 추가 성장 (+0.5% if 평가금 > V)
-            bonus = 0.005 if (current_price * qty) > v_old else 0.0
-            
-            total_rate = target_growth_rate + bonus
-            growth_amt = v_old * total_rate
-            
-            v_final = v_old + growth_amt + add_val
-            st.info(f"📈 성장: {total_rate*100:.2f}% (+${growth_amt:.2f})")
-        else:
-            v_final = v_old + add_val
+        # [NEW] 성장 로직: V_new = V_old + (Pool / G) + 적립금
+        growth_amt = 0.0
+        if pool > 0:
+            growth_amt = pool / g_factor
+        
+        v_final = v_old + growth_amt + add_val
+        st.info(f"📈 성장분(Pool/{g_factor}): +${growth_amt:.2f}")
 
     # 저장 버튼
     if st.button("💾 시트 저장"):
@@ -198,92 +181,138 @@ with st.sidebar:
         st.success("✅ 저장 완료!")
         st.rerun()
 
-# --- [메인 화면 표시] ---
-# 가격이 0이면 화면을 그릴 수 없음 -> 경고문 출력
+# --- [메인 화면] ---
 if current_price <= 0:
-    st.error("👈 사이드바에서 'TQQQ 현재가'를 입력해주세요.")
+    st.error("👈 사이드바에서 현재가를 입력해주세요.")
     st.stop()
 
-# 밴드 계산
-v_min = v_final * (1 - band_pct)
-v_max = v_final * (1 + band_pct)
+# 자산 현황 계산
+curr_eval = current_price * qty
+curr_total_usd = curr_eval + pool
+curr_total_krw = curr_total_usd * fx_val
+roi_val_usd = curr_total_usd - principal_final
+roi_pct = (roi_val_usd / principal_final * 100) if principal_final > 0 else 0
 
-# 안전장치 함수
-def check_safety(dd, fng):
-    if dd > -10: return True, 1.0, "🟩 정상장 (100%)", "normal"
-    elif -20 < dd <= -10:
-        return (True, 0.5, "🟧 조정장 (50%)", "warning") if fng <= 15 else (False, 0.0, f"🚫 매수금지 (FnG {fng}>15)", "error")
-    else:
-        return (True, 0.3, "🟥 하락장 (30%)", "critical") if fng <= 10 else (False, 0.0, f"🚫 하락장 방어 (FnG {fng}>10)", "error")
-
-is_safe, quota, status_msg, status_type = check_safety(mdd_val, fng_val)
-
-# 자산 현황
-curr_asset_usd = (current_price * qty) + pool
-curr_asset_krw = curr_asset_usd * fx_val
-roi_val = curr_asset_krw - principal_final
-roi_pct = (roi_val / principal_final * 100) if principal_final > 0 else 0
-
-st.subheader(f"📊 TQQQ: ${current_price} (FnG: {int(fng_val)})")
-c1, c2, c3 = st.columns(3)
-c1.metric("원금", f"{principal_final:,.0f}원")
-c2.metric("평가금", f"{curr_asset_krw:,.0f}원", delta=f"{roi_val:,.0f}원")
-c3.metric("수익률", f"{roi_pct:.2f}%")
+st.subheader(f"📊 자산 현황 (TQQQ ${current_price})")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("목표값 (V)", f"${v_final:,.0f}")
+c2.metric("총 자산 (현금포함)", f"${curr_total_usd:,.0f}")
+c3.metric("현재 Pool", f"${pool:,.0f}")
+c4.metric("수익률", f"{roi_pct:.2f}%")
 
 st.divider()
 
-tab1, tab2 = st.tabs(["📢 가이드", "차트"])
+# 탭 구성
+tab1, tab2 = st.tabs(["📢 매매 가이드 (LOC/지정가)", "📈 차트"])
 
 with tab1:
-    if status_type == "normal": st.success(status_msg)
-    elif status_type == "warning": st.warning(status_msg)
-    else: st.error(status_msg)
+    # 텔레그램 전송용 텍스트 빌더
+    report_lines = []
+    report_lines.append(f"🌊 VR 5.0 (Pool) 가이드")
+    report_lines.append(f"TQQQ: ${current_price} / V: ${v_final:,.0f}")
+    report_lines.append(f"성향: {invest_type} (Limit {int(pool_cap_ratio*100)}%)")
     
     col_buy, col_sell = st.columns(2)
     
-    report_txt = f"VR5.0 / G={g_factor} / Band={int(band_pct*100)}%\n"
-    report_txt += f"TQQQ: ${current_price} / V: ${v_final:.1f}\n"
-    
+    # --- [매수 로직: LOC 그물망] ---
     with col_buy:
-        st.markdown("#### 매수 (Buy)")
-        if (current_price * qty) < v_min:
-            if is_safe:
-                st.write(f"✅ 쿼터: {quota*100}%")
-                for i in range(1, 10):
-                    t_q = qty + i
-                    p = v_min / t_q
-                    if p < current_price * 1.05:
-                        line = f"LOC 매수: {p:.2f}$ ({t_q}주)"
-                        st.code(line)
-                        report_txt += line + "\n"
-            else:
-                st.error("FnG 위험: 매수 금지")
-        else:
-            st.info("관망")
-
-    with col_sell:
-        st.markdown("#### 매도 (Sell)")
-        if (current_price * qty) > v_max:
-            for i in range(1, 10):
-                t_q = qty - i
-                if t_q <= 0: break
-                p = v_final / t_q
-                if p > current_price * 0.95:
-                    line = f"LOC 매도: {p:.2f}$ ({qty-t_q}주 팜)"
-                    st.code(line)
-                    report_txt += line + "\n"
-        else:
-            st.info("관망")
+        st.markdown("#### 🔵 매수 (LOC 주문)")
+        st.caption("주가가 떨어질 때 체결되도록 그물을 칩니다.")
+        
+        # Pool 한도 계산
+        max_pool_use = pool * pool_cap_ratio
+        st.markdown(f"**가용 Pool 한도:** :blue[${max_pool_use:,.0f}]")
+        
+        # LOC 테이블 생성 (현재가 기준 -2% 씩 5단계 or 한도까지)
+        st.markdown("| 종류 | 가격 (LOC) | 수량 | 금액 |")
+        st.markdown("|---|---|---|---|")
+        
+        used_pool = 0.0
+        # 예시: 현재가에서 -1.5% 간격으로 촘촘하게
+        steps = [0.985, 0.97, 0.955, 0.94, 0.925] 
+        
+        for i, factor in enumerate(steps):
+            buy_price = current_price * factor
+            # 1회 주문 금액 (대략 Pool 한도의 1/N 등분 혹은 1주씩)
+            # 여기서는 간단하게 1주씩 혹은 금액 비례로 설정 가능. 
+            # 매뉴얼상 '촘촘하게'이므로 1주~2주 단위로 제안
+            buy_qty = max(1, int((max_pool_use / 5) / buy_price)) # 한도를 5분할해서 투입
             
-    if st.button("텔레그램 전송"):
-        send_telegram_msg(report_txt)
+            cost = buy_price * buy_qty
+            
+            if used_pool + cost <= max_pool_use:
+                line = f"| LOC {i+1}차 | ${buy_price:.2f} | {buy_qty}주 | ${cost:.0f} |"
+                st.markdown(line)
+                report_lines.append(f"매수 LOC: ${buy_price:.2f} ({buy_qty}주)")
+                used_pool += cost
+            else:
+                break
+        
+        st.markdown(f"**총 투입 예정:** ${used_pool:,.0f} / (잔여 한도 ${max_pool_use - used_pool:,.0f})")
+
+    # --- [매도 로직: 지정가 목표] ---
+    with col_sell:
+        st.markdown("#### 🔴 매도 (지정가 주문)")
+        st.caption("자산이 V를 초과하는 구간에 미리 걸어둡니다.")
+        
+        # 목표 구간별 필요 주가 계산
+        # 총자산(Price*Qty + Pool) >= V * Target_Ratio
+        # Price * Qty >= (V * Target_Ratio) - Pool
+        # Price >= ((V * Target_Ratio) - Pool) / Qty
+        
+        targets = [1.05, 1.15, 1.25]
+        labels = ["1차 (5%↑)", "2차 (15%↑)", "졸업 (25%↑)"]
+        
+        st.markdown("| 단계 | 목표가 (지정가) | 실행 |")
+        st.markdown("|---|---|---|")
+        
+        sell_msg_added = False
+        
+        for t, lbl in zip(targets, labels):
+            target_asset = v_final * t
+            
+            # (목표자산 - 현재풀) / 수량 = 목표주가
+            if qty > 0:
+                target_price = (target_asset - pool) / qty
+                
+                # 이미 목표 달성했는지 체크
+                is_reached = "✅ 도달" if curr_total_usd >= target_asset else ""
+                if is_reached:
+                    act_msg = "**지금 즉시 매도**"
+                else:
+                    act_msg = "예약 매도"
+
+                st.markdown(f"| {lbl} | **${target_price:.2f}** | {is_reached} |")
+                
+                if curr_total_usd < target_asset:
+                    report_lines.append(f"매도 예약({lbl}): ${target_price:.2f}")
+                else:
+                    report_lines.append(f"🚨 매도 신호({lbl}): 현재가(${current_price}) > 목표가(${target_price:.2f})")
+                    sell_msg_added = True
+            else:
+                st.write("보유 수량 0주")
+
+    # 텔레그램 버튼
+    st.write("")
+    if st.button("✈️ 텔레그램으로 가이드 전송"):
+        full_msg = "\n".join(report_lines)
+        send_telegram_msg(full_msg)
 
 with tab2:
     fig = go.Figure()
+    # 차트에는 V값과 밴드구간(매도구간)을 시각화
     dates = [datetime.now().date(), datetime.now().date() + timedelta(days=14)]
-    fig.add_trace(go.Scatter(x=dates, y=[v_min, v_min], name="Min", line=dict(color='red', dash='dash')))
-    fig.add_trace(go.Scatter(x=dates, y=[v_max, v_max], name="Max", line=dict(color='green', dash='dash')))
-    fig.add_trace(go.Scatter(x=dates, y=[v_final, v_final], name="V", line=dict(color='blue')))
-    fig.add_trace(go.Scatter(x=[dates[0]], y=[current_price*qty], name="내자산", marker=dict(size=12, color='orange')))
-    fig.update_layout(height=350, margin=dict(l=10, r=10, t=30, b=10))
+    
+    # 1.05배, 1.15배 라인
+    v_105 = v_final * 1.05
+    v_115 = v_final * 1.15
+    
+    fig.add_trace(go.Scatter(x=dates, y=[v_final, v_final], name="V (기준선)", line=dict(color='blue', width=2)))
+    fig.add_trace(go.Scatter(x=dates, y=[v_105, v_105], name="매도 1차(105%)", line=dict(color='orange', dash='dot')))
+    fig.add_trace(go.Scatter(x=dates, y=[v_115, v_115], name="매도 2차(115%)", line=dict(color='red', dash='dot')))
+    
+    # 내 자산 점 찍기
+    fig.add_trace(go.Scatter(x=[dates[0]], y=[curr_total_usd], name="내 총자산", marker=dict(size=14, color='green', symbol='star')))
+    
+    fig.update_layout(title="V값 vs 내 자산 위치", height=400)
     st.plotly_chart(fig, use_container_width=True)
