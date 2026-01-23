@@ -5,34 +5,37 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 
-# --- [0. 화면 설정 및 스타일 (글자색 강제 지정)] ---
+# --- [0. 화면 설정 및 CSS 수정] ---
 st.set_page_config(page_title="TQQQ VR 5.0 Final", layout="wide")
 st.markdown("""
     <style>
         .block-container {padding-top: 1rem; padding-bottom: 2rem;}
         
+        /* [수정] 글자색 강제 지정 (안 보임 해결) */
         .metric-box {
-            background-color: #f8f9fa;
-            border-left: 6px solid #ffcc00;
+            background-color: #f8f9fa; /* 밝은 회색 배경 */
+            border-left: 6px solid #ffcc00; /* 노란색 강조 선 */
             padding: 15px;
             border-radius: 8px;
             margin-bottom: 15px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         
+        /* 박스 내부 텍스트 색상 강제 (검정) */
         .header-text {
             font-size: 1.3rem;
             font-weight: 800;
-            color: #000000 !important;
+            color: #000000 !important; /* 무조건 검은색 */
             display: block;
             margin-bottom: 5px;
         }
         .sub-text {
             font-size: 1.0rem;
-            color: #333333 !important;
+            color: #333333 !important; /* 진한 회색 */
             font-weight: 500;
         }
         
+        /* 매뉴얼 스타일 */
         .manual-step {
             background-color: #e3f2fd;
             padding: 10px;
@@ -132,19 +135,20 @@ st.title("📊 TQQQ VR 5.0 Dashboard")
 
 tab1, tab2, tab3 = st.tabs(["📋 매매 가이드 (표)", "📈 성장 차트", "📖 초보자용 매뉴얼"])
 
-# --- [TAB 1: 매매 가이드] ---
+# --- [TAB 1: 매매 가이드 (표)] ---
 with tab1:
     col_buy, col_sell = st.columns(2)
 
-    # === [매수점 로직: 하단부터 시작] ===
+    # === [매수점 로직] ===
     with col_buy:
         st.subheader("🔵 매수점 (Buying Point)")
         buy_limit = final_pool * pool_cap
         
-        # 10단계 분할 매수 수량
+        # 10단계 분할 매수 수량 계산
         total_buy_qty = int(buy_limit / (curr_p * 0.9)) if curr_p > 0 else 0
         step_buy_qty = max(1, int(total_buy_qty / 10))
 
+        # [수정] 글자색 강제 지정한 박스 사용
         st.markdown(f"""
         <div class="metric-box">
             <span class="header-text">📉 최소값(밴드하단): ${min_val:,.2f}</span>
@@ -154,13 +158,13 @@ with tab1:
         
         st.info(f"💡 **가이드:** {step_buy_qty}개씩 지정가 매수 (잔량 주문)")
 
+        # 매수 데이터프레임 생성
         buy_data = []
         cur_pool = final_pool
         cur_qty = qty
         
-        # 매수는 현재가 아래부터 그물
         for i in range(10):
-            target_p = curr_p * (1 - (0.015 * (i+1))) 
+            target_p = curr_p * (1 - (0.015 * (i+1))) # 1.5%씩 하락
             cost = target_p * step_buy_qty
             if cur_pool >= cost:
                 cur_qty += step_buy_qty
@@ -173,41 +177,28 @@ with tab1:
         
         st.dataframe(pd.DataFrame(buy_data), use_container_width=True, hide_index=True)
 
-    # === [매도점 로직 수정: 밴드 상단 가격부터 시작!] ===
+    # === [매도점 로직] ===
     with col_sell:
         st.subheader("🔴 매도점 (Selling Point)")
-        
-        # [핵심 수정] 매도 시작 가격 = 밴드 상단 가격 (Max Value / Qty)
-        # 현재가가 이미 상단을 넘었으면 현재가부터, 아니면 상단 가격부터 시작
-        start_sell_price = max_val / qty if qty > 0 else 0
-        
-        # 만약 현재가가 이미 상단을 뚫었다면? -> 현재가부터 매도 시작
-        # 아직 상단 아래라면? -> 상단 가격에 도달해야 매도 시작
-        base_sell_price = max(curr_p, start_sell_price)
+        step_sell_qty = max(1, int(qty / 10))
 
-        step_sell_qty = max(1, int(qty / 10)) # 보유량의 10%씩 분할 매도
-
+        # [수정] 글자색 강제 지정한 박스 사용
         st.markdown(f"""
         <div class="metric-box">
             <span class="header-text">📈 최대값(밴드상단): ${max_val:,.2f}</span>
-            <span class="sub-text">상단 도달 가격: <b>${start_sell_price:,.2f}</b></span>
+            <span class="sub-text">현재 잔여개수: <b>{qty}개</b> │ 현재 Pool: <b>${final_pool:,.2f}</b></span>
         </div>
         """, unsafe_allow_html=True)
 
-        if curr_p < start_sell_price:
-             st.info(f"💡 **대기:** 주가가 **${start_sell_price:.2f}**에 도달해야 매도를 시작합니다.")
-        else:
-             st.warning(f"🚨 **돌파:** 이미 밴드 상단을 넘었습니다! 즉시 매도 대응하세요.")
+        st.info(f"💡 **가이드:** {step_sell_qty}개씩 지정가 매도 (잔량 주문)")
 
         sell_data = []
         cur_pool_s = final_pool
         cur_qty_s = qty
         
-        # 상단 가격(base_sell_price)부터 위로 1.5%씩 올라가며 매도 타점 잡기
         for i in range(10):
             if cur_qty_s >= step_sell_qty:
-                # 시작점(상단)에서 0%, 1.5%, 3%... 위로 설정
-                target_p = base_sell_price * (1 + (0.015 * i)) 
+                target_p = curr_p * (1 + (0.015 * (i+1))) # 1.5%씩 상승
                 revenue = target_p * step_sell_qty
                 cur_qty_s -= step_sell_qty
                 cur_pool_s += revenue
@@ -242,7 +233,7 @@ with tab2:
         fig.update_layout(height=500, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig, use_container_width=True)
 
-# --- [TAB 3: 운용 매뉴얼] ---
+# --- [TAB 3: 운용 매뉴얼 (상세 버전)] ---
 with tab3:
     st.markdown("### 📘 VR 5.0 완전 정복 (초심자용)")
     
@@ -278,9 +269,9 @@ with tab3:
         2. 기간 설정: 오늘부터 <b>2주 뒤 날짜</b>까지로 설정하세요.<br>
         3. 주문 종류: <b>지정가</b>, 조건은 <b>잔량(잔량유지)</b>을 꼭 체크하세요.<br>
         4. 가격/수량: 가이드 표에 나온 가격과 수량(예: 50달러에 3주)을 입력하고 전송하세요.<br>
-        <br>
+        5. 이것을 1차부터 끝까지 반복하면 끝입니다.
+        <br><br>
         <b>[매도 주문]</b><br>
-        1. 매도 가이드를 보세요. 만약 <b>"대기"</b> 상태라면 매도 주문을 걸지 마세요. (아직 안 올랐으니까요)<br>
-        2. 매도 가격이 뜬다면, 매수와 똑같이 <b>지정가/잔량</b>으로 예약 매도를 거시면 됩니다.
+        매수와 똑같습니다. 매도 가이드 표에 나온 가격과 수량대로 '매도 예약'을 거시면 됩니다.
         </div>
         """, unsafe_allow_html=True)
