@@ -1,63 +1,29 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-from datetime import datetime
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 
-# --- [0. 화면 및 스타일 설정 (사진과 동일하게)] ---
+# --- [0. 화면 설정] ---
 st.set_page_config(page_title="TQQQ VR 5.0 Final", layout="wide")
 st.markdown("""
     <style>
         .block-container {padding-top: 1rem; padding-bottom: 2rem;}
-        
-        /* 테이블 스타일 정의 */
-        .vr-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-family: 'Arial', sans-serif;
-            text-align: center;
-        }
-        .vr-table th, .vr-table td {
-            border: 1px solid #ddd;
-            padding: 8px;
-            font-size: 14px;
-        }
-        
-        /* 헤더 스타일 (매수점/매도점) */
-        .header-title {
-            font-size: 32px;
-            font-weight: bold;
-            text-align: center;
-            margin-bottom: 10px;
-            background-color: #dbeaff; /* 연한 파랑 배경 */
-            padding: 10px;
-            border: 2px solid #b0c4de;
+        .metric-box {
+            background-color: #f0f2f6;
+            border-left: 5px solid #ffcc00;
+            padding: 15px;
             border-radius: 5px;
+            margin-bottom: 10px;
         }
-
-        /* 노란색 강조 헤더 (최소값, 잔여개수, Pool) */
-        .yellow-header {
-            background-color: #ffff00;
-            font-weight: bold;
-            color: black;
-        }
-        
-        /* 일반 헤더 */
-        .gray-header {
-            background-color: #f0f0f0;
+        .header-text {
+            font-size: 1.2rem;
             font-weight: bold;
         }
-
-        /* 매수/매도 가격 텍스트 색상 */
-        .price-text-buy { color: #ff0000; font-weight: bold; } /* 빨강 */
-        .price-text-sell { color: #0000ff; font-weight: bold; } /* 파랑 */
-
-        /* 좌측 라벨 컬럼 */
-        .label-col {
-            background-color: #f9f9f9;
-            font-weight: bold;
-            vertical-align: middle;
-            width: 20%;
+        .sub-text {
+            font-size: 0.9rem;
+            color: #555;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -80,7 +46,6 @@ m = get_market_data()
 with st.sidebar:
     st.header("⚙️ VR 5.0 설정")
     
-    # 자금 관리 모드
     invest_type = st.radio(
         "투자 성향", 
         ["적립식 (Pool 75%)", "거치식 (Pool 50%)", "인출식 (Pool 25%)"]
@@ -95,7 +60,6 @@ with st.sidebar:
     
     st.divider()
     
-    # 구글 시트 연동
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = pd.DataFrame()
     last_v, last_pool, last_princ = 0.0, 0.0, 0.0
@@ -140,132 +104,138 @@ with st.sidebar:
         st.success("저장 완료")
         st.rerun()
 
-# --- [3. 메인 화면 - 매수/매도 테이블 생성 로직] ---
+# --- [3. 메인 화면] ---
 if curr_p <= 0: st.stop()
 
-# 기본 계산
 eval_usd = curr_p * qty
 total_usd = eval_usd + final_pool
-min_val = v_final * (1 - b_pct)  # 밴드 하단 (최소값)
-max_val = v_final * (1 + b_pct)  # 밴드 상단 (최대값)
+min_val = v_final * (1 - b_pct)  # 밴드 하단
+max_val = v_final * (1 + b_pct)  # 밴드 상단
 
-# [매수 테이블 데이터 생성]
-buy_limit = final_pool * pool_cap # 사용 가능 예산
-# 예산으로 살 수 있는 총 수량을 계산 후, 10단계로 리스팅 (사진처럼 촘촘하게)
-total_buy_qty = int(buy_limit / (curr_p * 0.9)) if curr_p > 0 else 0
-step_qty = max(1, int(total_buy_qty / 10)) # 사진처럼 '3개씩' 등 일정한 간격
-
-buy_rows = ""
-current_buy_pool = final_pool
-current_buy_qty = qty
-for i in range(10): # 10줄 출력
-    target_p = curr_p * (1 - (0.015 * (i+1))) # -1.5%씩 하락하는 가격 가정
-    cost = target_p * step_qty
-    if current_buy_pool >= cost:
-        current_buy_qty += step_qty
-        current_buy_pool -= cost
-        buy_rows += f"""
-        <tr>
-            <td>{current_buy_qty}</td>
-            <td class="price-text-buy">{target_p:.2f}</td>
-            <td>{current_buy_pool:,.2f}</td>
-        </tr>
-        """
-
-# [매도 테이블 데이터 생성]
-sell_rows = ""
-current_sell_pool = final_pool
-current_sell_qty = qty
-sell_step = max(1, int(qty / 10)) # 보유량의 1/10씩 매도
-for i in range(10):
-    if current_sell_qty >= sell_step:
-        target_p = curr_p * (1 + (0.015 * (i+1))) # +1.5%씩 상승하는 가격
-        revenue = target_p * sell_step
-        current_sell_qty -= sell_step
-        current_sell_pool += revenue
-        sell_rows += f"""
-        <tr>
-            <td>{current_sell_qty}</td>
-            <td class="price-text-sell">{target_p:.2f}</td>
-            <td>{current_sell_pool:,.2f}</td>
-        </tr>
-        """
-
-# --- [4. HTML 테이블 렌더링] ---
 st.title("📊 TQQQ VR 5.0 Dashboard")
 
-c1, c2 = st.columns(2)
+# 탭 복구 완료
+tab1, tab2, tab3 = st.tabs(["📋 매매 가이드 (표)", "📈 성장 차트", "📖 운용 매뉴얼"])
 
-# [왼쪽: 매수점 테이블] (사진과 동일 구조)
-with c1:
-    st.markdown(f"""
-    <div class="header-title">매 수 점</div>
-    <table class="vr-table">
-        <thead>
-            <tr>
-                <th class="gray-header">최소값</th>
-                <th class="gray-header">잔여개수</th>
-                <th class="gray-header">매수점</th>
-                <th class="gray-header">Pool</th>
-            </tr>
-            <tr class="yellow-header">
-                <td>{min_val:,.2f}</td>
-                <td>{qty}</td>
-                <td></td>
-                <td>{final_pool:,.2f}</td>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td rowspan="10" class="label-col">
-                    {step_qty}개씩<br>
-                    지정가매수<br>
-                    잔량주문
-                </td>
-                {buy_rows.split('</tr>')[0] + '</tr>'} 
-            </tr>
-            {''.join(buy_rows.split('</tr>')[1:])}
-        </tbody>
-    </table>
-    """, unsafe_allow_html=True)
+# --- [TAB 1: 매매 가이드 (표)] ---
+with tab1:
+    col_buy, col_sell = st.columns(2)
 
-# [오른쪽: 매도점 테이블] (사진과 동일 구조)
-with c2:
-    st.markdown(f"""
-    <div class="header-title">매 도 점</div>
-    <table class="vr-table">
-        <thead>
-            <tr>
-                <th class="gray-header">최대값</th>
-                <th class="gray-header">잔여개수</th>
-                <th class="gray-header">매도점</th>
-                <th class="gray-header">Pool</th>
-            </tr>
-            <tr class="yellow-header">
-                <td>{max_val:,.2f}</td>
-                <td>{qty}</td>
-                <td></td>
-                <td>{final_pool:,.2f}</td>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td rowspan="10" class="label-col">
-                    {sell_step}개씩<br>
-                    지정가매도<br>
-                    잔량주문
-                </td>
-                {sell_rows.split('</tr>')[0] + '</tr>'}
-            </tr>
-            {''.join(sell_rows.split('</tr>')[1:])}
-        </tbody>
-    </table>
-    """, unsafe_allow_html=True)
+    # === [매수점 로직] ===
+    with col_buy:
+        st.subheader("🔵 매수점 (Buying Point)")
+        buy_limit = final_pool * pool_cap
+        
+        # 10단계 분할 매수 수량 계산
+        total_buy_qty = int(buy_limit / (curr_p * 0.9)) if curr_p > 0 else 0
+        step_buy_qty = max(1, int(total_buy_qty / 10))
 
-# --- [하단: 운용 팁] ---
-st.markdown("---")
-st.info(f"""
-💡 **운용 가이드:** 위 표는 사용자님의 자금 상황(Pool 한도 {int(pool_cap*100)}%)에 맞춰 계산되었습니다.
-* **매수:** 주가가 떨어질 때마다 **{step_qty}주씩** 더 사지도록 예약하세요.
-* **매도:** 주가가 오를 때마다 **{sell_step}주씩** 팔리도록 예약하세요.
-""")
+        # [상단 요약 박스 - 노란색 헤더 대체]
+        st.markdown(f"""
+        <div class="metric-box">
+            <span class="header-text">📉 최소값(밴드하단): ${min_val:,.2f}</span><br>
+            <span class="sub-text">현재 잔여개수: <b>{qty}개</b> │ 현재 Pool: <b>${final_pool:,.2f}</b></span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.info(f"💡 **가이드:** {step_buy_qty}개씩 지정가 매수 (잔량 주문)")
+
+        # 매수 데이터프레임 생성
+        buy_data = []
+        cur_pool = final_pool
+        cur_qty = qty
+        
+        for i in range(10):
+            target_p = curr_p * (1 - (0.015 * (i+1))) # 1.5%씩 하락
+            cost = target_p * step_buy_qty
+            if cur_pool >= cost:
+                cur_qty += step_buy_qty
+                cur_pool -= cost
+                buy_data.append({
+                    "잔여 개수": f"{cur_qty}개",
+                    "매수 가격": f"${target_p:.2f}",
+                    "예상 Pool": f"${cur_pool:,.2f}"
+                })
+        
+        st.dataframe(pd.DataFrame(buy_data), use_container_width=True, hide_index=True)
+
+    # === [매도점 로직] ===
+    with col_sell:
+        st.subheader("🔴 매도점 (Selling Point)")
+        
+        # 10단계 분할 매도 수량 계산
+        step_sell_qty = max(1, int(qty / 10))
+
+        # [상단 요약 박스]
+        st.markdown(f"""
+        <div class="metric-box">
+            <span class="header-text">📈 최대값(밴드상단): ${max_val:,.2f}</span><br>
+            <span class="sub-text">현재 잔여개수: <b>{qty}개</b> │ 현재 Pool: <b>${final_pool:,.2f}</b></span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.info(f"💡 **가이드:** {step_sell_qty}개씩 지정가 매도 (잔량 주문)")
+
+        # 매도 데이터프레임 생성
+        sell_data = []
+        cur_pool_s = final_pool
+        cur_qty_s = qty
+        
+        for i in range(10):
+            if cur_qty_s >= step_sell_qty:
+                target_p = curr_p * (1 + (0.015 * (i+1))) # 1.5%씩 상승
+                revenue = target_p * step_sell_qty
+                cur_qty_s -= step_sell_qty
+                cur_pool_s += revenue
+                sell_data.append({
+                    "잔여 개수": f"{cur_qty_s}개",
+                    "매도 가격": f"${target_p:.2f}",
+                    "예상 Pool": f"${cur_pool_s:,.2f}"
+                })
+                
+        st.dataframe(pd.DataFrame(sell_data), use_container_width=True, hide_index=True)
+
+# --- [TAB 2: 성장 차트] ---
+with tab2:
+    if not df.empty:
+        c_df = df.copy()
+        c_df['Date'] = pd.to_datetime(c_df['Date']).dt.normalize()
+        now_date = pd.to_datetime(datetime.now().date())
+        now_df = pd.DataFrame([{"Date": now_date, "V_old": v_final, "Qty": qty, "Price": curr_p, "Band": int(b_pct*100)}])
+        plot_df = pd.concat([c_df, now_df], ignore_index=True)
+        plot_df = plot_df.drop_duplicates(subset=['Date'], keep='last').sort_values('Date')
+        
+        plot_df["상단"] = plot_df["V_old"] * (1 + plot_df["Band"]/100.0)
+        plot_df["하단"] = plot_df["V_old"] * (1 - plot_df["Band"]/100.0)
+        plot_df["자산"] = plot_df["Qty"] * plot_df["Price"]
+        plot_df = plot_df[plot_df["자산"] > 0]
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['상단'], line=dict(color='#00FF00', width=1), name='매도 밴드'))
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['하단'], line=dict(color='#FF4B4B', width=1), fill='tonexty', fillcolor='rgba(255, 75, 75, 0.05)', name='매수 밴드'))
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['V_old'], line=dict(color='#00BFFF', width=2, dash='dot'), name='중심선(V)'))
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['자산'], line=dict(color='#FFFF00', width=3), mode='lines+markers', name='내 자산(E)'))
+        fig.update_layout(height=500, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        st.plotly_chart(fig, use_container_width=True)
+
+# --- [TAB 3: 운용 매뉴얼] ---
+with tab3:
+    st.markdown("### 📖 VR 5.0 필승 운용 매뉴얼")
+    st.info("이 매뉴얼은 사용자님의 3단 자금 관리 원칙을 준수합니다.")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        #### 1️⃣ 자금 관리 (Pool Limit)
+        - **적립식:** Pool의 **75%** 사용 (월급 입금 예정)
+        - **거치식:** Pool의 **50%** 사용 (추가 불입 없음)
+        - **인출식:** Pool의 **25%** 사용 (자금 인출 대비)
+        """)
+    with col2:
+        st.markdown("""
+        #### 2️⃣ 실전 주문 (2주 1회)
+        - **기간:** 2주 (다음 사이클 전까지)
+        - **유형:** 지정가
+        - **조건:** **잔량 주문** (매우 중요)
+        - **수량:** 좌측 [매매 가이드] 표에 나온 수량만큼 예약
+        """)
