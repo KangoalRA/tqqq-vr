@@ -5,25 +5,44 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 
-# --- [0. 화면 설정] ---
+# --- [0. 화면 설정 및 CSS 수정] ---
 st.set_page_config(page_title="TQQQ VR 5.0 Final", layout="wide")
 st.markdown("""
     <style>
         .block-container {padding-top: 1rem; padding-bottom: 2rem;}
+        
+        /* [수정] 글자색 강제 지정 (안 보임 해결) */
         .metric-box {
-            background-color: #f0f2f6;
-            border-left: 5px solid #ffcc00;
+            background-color: #f8f9fa; /* 밝은 회색 배경 */
+            border-left: 6px solid #ffcc00; /* 노란색 강조 선 */
             padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 10px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
+        
+        /* 박스 내부 텍스트 색상 강제 (검정) */
         .header-text {
-            font-size: 1.2rem;
-            font-weight: bold;
+            font-size: 1.3rem;
+            font-weight: 800;
+            color: #000000 !important; /* 무조건 검은색 */
+            display: block;
+            margin-bottom: 5px;
         }
         .sub-text {
-            font-size: 0.9rem;
-            color: #555;
+            font-size: 1.0rem;
+            color: #333333 !important; /* 진한 회색 */
+            font-weight: 500;
+        }
+        
+        /* 매뉴얼 스타일 */
+        .manual-step {
+            background-color: #e3f2fd;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            border-left: 4px solid #2196f3;
+            color: #000;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -114,8 +133,7 @@ max_val = v_final * (1 + b_pct)  # 밴드 상단
 
 st.title("📊 TQQQ VR 5.0 Dashboard")
 
-# 탭 복구 완료
-tab1, tab2, tab3 = st.tabs(["📋 매매 가이드 (표)", "📈 성장 차트", "📖 운용 매뉴얼"])
+tab1, tab2, tab3 = st.tabs(["📋 매매 가이드 (표)", "📈 성장 차트", "📖 초보자용 매뉴얼"])
 
 # --- [TAB 1: 매매 가이드 (표)] ---
 with tab1:
@@ -130,10 +148,10 @@ with tab1:
         total_buy_qty = int(buy_limit / (curr_p * 0.9)) if curr_p > 0 else 0
         step_buy_qty = max(1, int(total_buy_qty / 10))
 
-        # [상단 요약 박스 - 노란색 헤더 대체]
+        # [수정] 글자색 강제 지정한 박스 사용
         st.markdown(f"""
         <div class="metric-box">
-            <span class="header-text">📉 최소값(밴드하단): ${min_val:,.2f}</span><br>
+            <span class="header-text">📉 최소값(밴드하단): ${min_val:,.2f}</span>
             <span class="sub-text">현재 잔여개수: <b>{qty}개</b> │ 현재 Pool: <b>${final_pool:,.2f}</b></span>
         </div>
         """, unsafe_allow_html=True)
@@ -162,21 +180,18 @@ with tab1:
     # === [매도점 로직] ===
     with col_sell:
         st.subheader("🔴 매도점 (Selling Point)")
-        
-        # 10단계 분할 매도 수량 계산
         step_sell_qty = max(1, int(qty / 10))
 
-        # [상단 요약 박스]
+        # [수정] 글자색 강제 지정한 박스 사용
         st.markdown(f"""
         <div class="metric-box">
-            <span class="header-text">📈 최대값(밴드상단): ${max_val:,.2f}</span><br>
+            <span class="header-text">📈 최대값(밴드상단): ${max_val:,.2f}</span>
             <span class="sub-text">현재 잔여개수: <b>{qty}개</b> │ 현재 Pool: <b>${final_pool:,.2f}</b></span>
         </div>
         """, unsafe_allow_html=True)
 
         st.info(f"💡 **가이드:** {step_sell_qty}개씩 지정가 매도 (잔량 주문)")
 
-        # 매도 데이터프레임 생성
         sell_data = []
         cur_pool_s = final_pool
         cur_qty_s = qty
@@ -218,24 +233,45 @@ with tab2:
         fig.update_layout(height=500, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig, use_container_width=True)
 
-# --- [TAB 3: 운용 매뉴얼] ---
+# --- [TAB 3: 운용 매뉴얼 (상세 버전)] ---
 with tab3:
-    st.markdown("### 📖 VR 5.0 필승 운용 매뉴얼")
-    st.info("이 매뉴얼은 사용자님의 3단 자금 관리 원칙을 준수합니다.")
+    st.markdown("### 📘 VR 5.0 완전 정복 (초심자용)")
     
-    col1, col2 = st.columns(2)
-    with col1:
+    with st.expander("STEP 1: 처음 시작할 때 (딱 한 번만)", expanded=True):
         st.markdown("""
-        #### 1️⃣ 자금 관리 (Pool Limit)
-        - **적립식:** Pool의 **75%** 사용 (월급 입금 예정)
-        - **거치식:** Pool의 **50%** 사용 (추가 불입 없음)
-        - **인출식:** Pool의 **25%** 사용 (자금 인출 대비)
-        """)
-    with col2:
+        <div class="manual-step">
+        <b>1. 설정 확인:</b> 왼쪽 사이드바에서 [최초 시작]을 선택하세요.<br>
+        <b>2. 원금 입력:</b> 내가 투자할 총 금액(달러)을 '총 원금' 칸에 입력하세요. (예: 5000)<br>
+        <b>3. 자동 계산:</b> 시스템이 자동으로 원금의 50%만큼 몇 주를 사야 할지 알려줍니다.<br>
+        <b>4. 증권사 매수:</b> 증권사 앱을 켜고, 화면에 뜬 수량만큼 시장가로 즉시 매수하세요.<br>
+        <b>5. 저장:</b> 매수가 끝났으면 '데이터 저장' 버튼을 누르세요. 이제 시작입니다!
+        </div>
+        """, unsafe_allow_html=True)
+
+    with st.expander("STEP 2: 2주마다 업데이트 할 때 (반복)", expanded=True):
         st.markdown("""
-        #### 2️⃣ 실전 주문 (2주 1회)
-        - **기간:** 2주 (다음 사이클 전까지)
-        - **유형:** 지정가
-        - **조건:** **잔량 주문** (매우 중요)
-        - **수량:** 좌측 [매매 가이드] 표에 나온 수량만큼 예약
-        """)
+        <div class="manual-step">
+        <b>1. 설정 확인:</b> 왼쪽 사이드바에서 [사이클 업데이트]를 선택하세요.<br>
+        <b>2. 잔고 입력:</b> 증권사 계좌를 보고 '현재 보유 주식 수'와 '남은 달러 예수금(현금)'을 정확히 입력하세요.<br>
+        <b>3. 입금(선택):</b> 월급날이라 돈을 더 넣었다면 '신규 입금액'에 적으세요. (없으면 0)<br>
+        <b>4. 저장:</b> 입력이 다 맞으면 '데이터 저장'을 누르세요.<br>
+        <b>5. 숙제 확인:</b> [매매 가이드] 탭으로 이동하세요. 
+        </div>
+        """, unsafe_allow_html=True)
+
+    with st.expander("STEP 3: 증권사 주문 넣는 법 (가장 중요!)", expanded=True):
+        st.markdown("""
+        <div class="manual-step">
+        매매 가이드 표를 보고 그대로 따라 하세요.<br>
+        <br>
+        <b>[매수 주문]</b><br>
+        1. 증권사 앱 메뉴에서 <b>'주식예약주문'</b>을 찾으세요.<br>
+        2. 기간 설정: 오늘부터 <b>2주 뒤 날짜</b>까지로 설정하세요.<br>
+        3. 주문 종류: <b>지정가</b>, 조건은 <b>잔량(잔량유지)</b>을 꼭 체크하세요.<br>
+        4. 가격/수량: 가이드 표에 나온 가격과 수량(예: 50달러에 3주)을 입력하고 전송하세요.<br>
+        5. 이것을 1차부터 끝까지 반복하면 끝입니다.
+        <br><br>
+        <b>[매도 주문]</b><br>
+        매수와 똑같습니다. 매도 가이드 표에 나온 가격과 수량대로 '매도 예약'을 거시면 됩니다.
+        </div>
+        """, unsafe_allow_html=True)
