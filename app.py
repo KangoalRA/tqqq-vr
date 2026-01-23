@@ -2,20 +2,29 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 from streamlit_gsheets import GSheetsConnection
 
 # --- [0. 화면 설정] ---
 st.set_page_config(page_title="TQQQ VR 5.0", layout="wide")
 
-# CSS: 상단 여백 제거
 st.markdown("""
     <style>
         .block-container {padding-top: 1.5rem; padding-bottom: 1rem;}
         div[data-testid="stMetricValue"] {font-size: 1.5rem !important; font-weight: 700;}
     </style>
 """, unsafe_allow_html=True)
+
+def send_telegram_msg(msg):
+    try:
+        if "telegram" in st.secrets:
+            token = st.secrets["telegram"]["bot_token"]
+            chat_id = st.secrets["telegram"]["chat_id"]
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            requests.post(url, data={"chat_id": chat_id, "text": msg})
+            st.toast("✅ 전송 완료")
+    except: pass
 
 @st.cache_data(ttl=300)
 def get_market_data():
@@ -30,7 +39,7 @@ def get_market_data():
 
 m = get_market_data()
 
-# --- [사이드바 설정] ---
+# --- [사이드바] ---
 with st.sidebar:
     st.header("📊 VR 5.0 설정")
     invest_type = st.radio("투자 성향", ["적립식 (75%)", "거치식 (50%)"])
@@ -96,7 +105,7 @@ c2.metric("총 자산", f"${total_usd:,.0f}")
 c3.metric("가용 Pool", f"${pool:,.0f}")
 c4.metric("수익률", f"{roi:.2f}%")
 
-tab1, tab2 = st.tabs(["📋 매매 가이드", "📈 자산 성장 히스토리"])
+tab1, tab2 = st.tabs(["📋 매매 가이드", "📈 자산 성장 차트"])
 
 with tab1:
     col_buy, col_sell = st.columns(2)
@@ -122,35 +131,66 @@ with tab1:
         else: st.info("보유량 없음")
 
 with tab2:
-    if not df.empty:
-        c_df = df.copy()
-        c_df['Date'] = pd.to_datetime(c_df['Date'])
-        # 현재 시점 추가
-        now_df = pd.DataFrame([{"Date": datetime.now(), "V_old": v_final, "Qty": qty, "Price": curr_p, "Band": int(b_pct*100)}])
-        c_df = pd.concat([c_df, now_df], ignore_index=True)
-        
-        c_df["상단"] = c_df["V_old"] * (1 + c_df["Band"]/100.0)
-        c_df["하단"] = c_df["V_old"] * (1 - c_df["Band"]/100.0)
-        c_df["자산"] = c_df["Qty"] * c_df["Price"]
-        
-        fig = go.Figure()
-        # 1. 밴드선 (초록색 실선)
-        fig.add_trace(go.Scatter(x=c_df['Date'], y=c_df['상단'], line=dict(color='#00FF00', width=1.5), name='매도 밴드'))
-        fig.add_trace(go.Scatter(x=c_df['Date'], y=c_df['하단'], line=dict(color='#00FF00', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='매수 밴드'))
-        
-        # 2. 목표 가치 (하늘색 점선)
-        fig.add_trace(go.Scatter(x=c_df['Date'], y=c_df['V_old'], line=dict(color='#00BFFF', width=2, dash='dash'), name='목표 가치(V)'))
-        
-        # 3. 내 주식 가치 (노란색 실선)
-        fig.add_trace(go.Scatter(x=c_df['Date'], y=c_df['자산'], line=dict(color='#FFFF00', width=3), name='내 주식 가치(E)'))
-        
-        # 자동 스케일 및 레이아웃
-        fig.update_layout(
-            height=450, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(l=10, r=10, t=10, b=10),
-            xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', tickformat='%m-%d'),
-            yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', autorange=True, fixedrange=False),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else: st.info("데이터를 저장하면 차트가 표시됩니다.")
+    # 1. 데이터 준비
+    c_df = df.copy() if not df.empty else pd.DataFrame()
+    if not c_df.empty: c_df['Date'] = pd.to_datetime(c_df['Date'])
+    
+    # 2. 현재 시점 추가 (Projection)
+    now_df = pd.DataFrame([{
+        "Date": datetime.now(), 
+        "V_old": v_final, 
+        "Qty": qty, 
+        "Price": curr_p, 
+        "Band": int(b_pct*100)
+    }])
+    plot_df = pd.concat([c_df, now_df], ignore_index=True)
+    
+    # 3. 차트용 변수 계산
+    plot_df["상단"] = plot_df["V_old"] * (1 + plot_df["Band"]/100.0)
+    plot_df["하단"] = plot_df["V_old"] * (1 - plot_df["Band"]/100.0)
+    plot_df["자산"] = plot_df["Qty"] * plot_df["Price"]
+    
+    # 4. Y축 스케일 자동 조정 (값 1개일 때 대비)
+    all_values = pd.concat([plot_df["상단"], plot_df["하단"], plot_df["자산"]])
+    y_min, y_max = all_values.min(), all_values.max()
+    margin = (y_max - y_min) * 0.1 if y_max != y_min else y_max * 0.1
+    
+    # 5. X축 스케일 조정 (왼쪽 벽에 붙이기)
+    min_date = plot_df['Date'].min()
+    max_date = plot_df['Date'].max()
+    # 오른쪽에는 약간의 여백(5일 정도)을 둬서 미래 지향적으로 보이게 함
+    x_range_end = max_date + timedelta(days=5) if max_date == min_date else max_date + (max_date - min_date) * 0.1
+
+    fig = go.Figure()
+    
+    # 밴드 (초록 실선)
+    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['상단'], 
+                             line=dict(color='#00FF00', width=1.5), name='Band Top'))
+    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['하단'], 
+                             line=dict(color='#00FF00', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='Band Bottom'))
+    
+    # 목표 V (하늘색 점선)
+    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['V_old'], 
+                             line=dict(color='#00BFFF', width=2, dash='dot'), name='Target V'))
+    
+    # 내 자산 E (노란색 실선)
+    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['자산'], 
+                             line=dict(color='#FFFF00', width=3), mode='lines+markers', name='My Asset(E)'))
+    
+    fig.update_layout(
+        height=500,
+        paper_bgcolor='rgba(0,0,0,0)', 
+        plot_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=10, r=10, t=30, b=10),
+        xaxis=dict(
+            showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
+            tickformat='%y-%m-%d',
+            range=[min_date, x_range_end] # [핵심] 시작점을 min_date로 강제 고정
+        ),
+        yaxis=dict(
+            showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
+            range=[y_min - margin, y_max + margin]
+        ),
+        legend=dict(orientation="h", y=1.05, x=1, xanchor="right")
+    )
+    st.plotly_chart(fig, use_container_width=True)
