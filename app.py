@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import requests
 from streamlit_gsheets import GSheetsConnection
 
-# --- [0. 화면 설정 및 CSS (사용자 선호 스타일)] ---
+# --- [0. 화면 설정 및 CSS] ---
 st.set_page_config(page_title="TQQQ VR 5.0 Official", layout="wide")
 st.markdown("""
     <style>
@@ -88,7 +88,7 @@ with st.sidebar:
         princ_final = last_princ + add_usd
         v_final = last_v + (final_pool / g_val) + add_usd if final_pool > 0 else last_v + add_usd
 
-    if st.button("💾 데이터 저장 (Save)", use_container_width=True):
+    if st.button("💾 이 사이클 데이터 저장", use_container_width=True):
         new_row = pd.DataFrame([{"Date": datetime.now().strftime('%Y-%m-%d'), "Qty": qty, "Pool": final_pool, "V_old": v_final, "Principal": princ_final, "Price": curr_p, "Band": int(b_pct*100)}])
         conn.update(worksheet="Sheet1", data=pd.concat([df, new_row], ignore_index=True).fillna(0))
         st.success("저장 완료!")
@@ -101,14 +101,12 @@ min_val, max_val = v_final * (1 - b_pct), v_final * (1 + b_pct)
 start_sell_p = max_val / qty if qty > 0 else 0
 base_sell_p = max(curr_p, start_sell_p)
 
-# 매수 가이드
 buy_guide, b_limit = [], final_pool * pool_cap
 for i in range(10):
     p = curr_p * (1 - (0.015 * (i+1)))
     q = int((b_limit/10)/p)
     if q >= 1: buy_guide.append({"가격": f"${p:.2f}", "수량": f"{q}주"})
 
-# 매도 가이드 (피라미드)
 sell_guide, weights = [], [1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
 unit = qty / sum(weights) if qty > 0 else 0
 for i in range(10):
@@ -131,7 +129,7 @@ with tab1:
     col_buy, col_sell = st.columns(2)
     with col_buy:
         if st.button("✈️ 매수 가이드 텔레그램 전송", use_container_width=True):
-            send_telegram_msg(f"🔵 [VR 5.0 매수]\n" + "\n".join([f"{d['가격']} / {d['수량']}" for d in buy_guide[:5]]))
+            send_telegram_msg(f"🔵 [VR 5.0 매수]\n하단: ${min_val:,.2f}\n" + "\n".join([f"{d['가격']} / {d['수량']}" for d in buy_guide[:5]]))
         st.markdown(f'<div class="metric-box"><span class="header-text">📉 매수 밴드(하단): ${min_val:,.2f}</span></div>', unsafe_allow_html=True)
         st.table(pd.DataFrame(buy_guide))
     with col_sell:
@@ -143,47 +141,45 @@ with tab1:
 with tab2:
     if not df.empty:
         df_p = df.copy()
-        df_p['Date'] = pd.to_datetime(df_p['Date'])
-        df_p["상단"] = df_p["V_old"] * (1 + b_pct); df_p["하단"] = df_p["V_old"] * (1 - b_pct); df_p["자산"] = df_p["Qty"] * df_p["Price"]
+        df_p['Date'] = pd.to_datetime(df_p['Date']).dt.normalize()
+        now_date = pd.to_datetime(datetime.now().date())
+        now_entry = pd.DataFrame([{"Date": now_date, "V_old": v_final, "Qty": qty, "Price": curr_p, "Band": int(b_pct*100)}])
+        plot_df = pd.concat([df_p, now_entry], ignore_index=True).drop_duplicates(subset=['Date'], keep='last').sort_values('Date')
+        plot_df["상단"] = plot_df["V_old"] * (1 + plot_df["Band"]/100.0)
+        plot_df["하단"] = plot_df["V_old"] * (1 - plot_df["Band"]/100.0)
+        plot_df["자산"] = plot_df["Qty"] * plot_df["Price"]
+        
+        # [수정] 밴드 우측 무한 연장 로직
+        last_d = plot_df['Date'].max()
+        future_d = last_d + timedelta(days=60) # 60일 연장
+        last_v, last_upper, last_lower = plot_df['V_old'].iloc[-1], plot_df['상단'].iloc[-1], plot_df['하단'].iloc[-1]
+        
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df_p['Date'], y=df_p['상단'], line=dict(color='green', width=1.5), name='매도 밴드'))
-        fig.add_trace(go.Scatter(x=df_p['Date'], y=df_p['하단'], line=dict(color='green', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='매수 밴드'))
-        fig.add_trace(go.Scatter(x=df_p['Date'], y=df_p['V_old'], line=dict(color='#00BFFF', dash='dot'), name='목표 가치(V)'))
-        fig.add_trace(go.Scatter(x=df_p['Date'], y=df_p['자산'], line=dict(color='#FFFF00', width=3), name='내 자산(E)'))
-        fig.update_layout(height=500, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        # 밴드 배경 (초록색)
+        fig.add_trace(go.Scatter(x=list(plot_df['Date']) + [future_d], y=list(plot_df['상단']) + [last_upper], line=dict(color='green', width=1.5), name='매도 밴드'))
+        fig.add_trace(go.Scatter(x=list(plot_df['Date']) + [future_d], y=list(plot_df['하단']) + [last_lower], line=dict(color='green', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='매수 밴드'))
+        # 중심선 연장
+        fig.add_trace(go.Scatter(x=list(plot_df['Date']) + [future_d], y=list(plot_df['V_old']) + [last_v], line=dict(color='#00BFFF', dash='dot'), name='목표 가치(V)'))
+        # 자산선 (현재까지만 표시)
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['자산'], line=dict(color='#FFFF00', width=3), name='내 자산(E)'))
+        
+        fig.update_layout(height=500, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(range=[plot_df['Date'].min(), future_d]))
         st.plotly_chart(fig, use_container_width=True)
 
-# --- [6. 운용 매뉴얼 (사용자 요청 원복)] ---
 with tab3:
     st.markdown("### 📖 TQQQ VR 5.0 실전 운용 매뉴얼")
-    
     with st.container():
         st.markdown('<div class="manual-section">', unsafe_allow_html=True)
         st.markdown("#### 1️⃣ 최초 시작 (Setting Up)")
-        st.markdown("""
-        * **자산 분배:** 총 원금의 **50%는 주식**을 즉시 매수하고, **50%는 현금**으로 남겨둡니다.
-        * **저장:** 매수한 수량과 남은 현금이 확인되면 '데이터 저장'을 누르세요.
-        """)
+        st.markdown("* **자산 분배:** 총 원금의 **50%는 주식**을 즉시 매수하고, **50%는 현금**으로 남겨둡니다.\n* **저장:** 매수한 수량과 남은 현금이 확인되면 '데이터 저장'을 누르세요.")
         st.markdown('</div>', unsafe_allow_html=True)
-
     with st.container():
         st.markdown('<div class="manual-section">', unsafe_allow_html=True)
         st.markdown("#### 2️⃣ 사이클 업데이트 및 예약 주문 (중요)")
-        st.markdown("""
-        * **주기:** 2주에 한 번 업데이트합니다.
-        * **주문 방식:** LOC가 아닌 **[지정가 예약 주문]**을 사용합니다.
-        * **설정 방법:** 1. 증권사 앱의 '예약주문' 메뉴에서 **기간을 2주로 설정**합니다.
-            2. 주문 유형은 **'지정가'**, 조건은 **'잔량'**으로 선택합니다.
-            3. 가이드의 1~5차 가격에 각각의 **[총 수량]**을 예약합니다.
-        * **원리:** 2주 동안 주가가 해당 가격에 닿을 때만 총 수량이 채워질 때까지 자동으로 사집니다.
-        """)
+        st.markdown("* **주기:** 2주에 한 번 업데이트합니다.\n* **주문 방식:** LOC가 아닌 **[지정가 예약 주문]**을 사용합니다.\n* **설정 방법:** 1. 증권사 앱의 '예약주문' 메뉴에서 **기간을 2주로 설정**합니다.\n    2. 주문 유형은 **'지정가'**, 조건은 **'잔량'**으로 선택합니다.\n    3. 가이드의 1~5차 가격에 각각의 **[총 수량]**을 예약합니다.\n* **원리:** 2주 동안 주가가 해당 가격에 닿을 때만 총 수량이 채워질 때까지 자동으로 사집니다.")
         st.markdown('</div>', unsafe_allow_html=True)
-
     with st.container():
         st.markdown('<div class="tip-box">', unsafe_allow_html=True)
         st.markdown("#### 💡 핵심 필승 규칙")
-        st.markdown("""
-        - **지정가 잔량 주문:** 매일 주문을 넣을 필요가 없습니다. 한 번만 예약하면 2주간 알아서 작동합니다.
-        - **본업 집중:** 2주에 한 번만 앱을 켜고 주문을 넣으면 끝입니다. 장중에 차트를 보지 마세요.
-        """)
+        st.markdown("- **지정가 잔량 주문:** 매일 주문을 넣을 필요가 없습니다. 한 번만 예약하면 2주간 알아서 작동합니다.\n- **본업 집중:** 2주에 한 번만 앱을 켜고 주문을 넣으면 끝입니다. 장중에 차트를 보지 마세요.")
         st.markdown('</div>', unsafe_allow_html=True)
