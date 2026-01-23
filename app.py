@@ -2,18 +2,22 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-from streamlit_gsheets import GSheetsConnection
+from datetime import datetime
+# gsheets 라이브러리 예외처리
+try:
+    from streamlit_gsheets import GSheetsConnection
+    gsheets_available = True
+except ImportError:
+    gsheets_available = False
 
-# --- [0. 화면 설정 및 CSS (글자색 완전 고정)] ---
+# --- [0. 화면 설정 및 CSS (글자색 검정 고정)] ---
 st.set_page_config(page_title="TQQQ VR 5.0 Final", layout="wide")
 st.markdown("""
     <style>
         .block-container {padding-top: 1rem; padding-bottom: 2rem;}
         
-        /* 박스 스타일: 배경색 밝게, 글자색 검정 강제 */
         .metric-box {
-            background-color: #ffffff; /* 완전 흰색 배경 */
+            background-color: #ffffff;
             border-left: 6px solid #ffcc00; 
             padding: 15px;
             border-radius: 8px;
@@ -24,13 +28,13 @@ st.markdown("""
         .header-text {
             font-size: 1.3rem;
             font-weight: 900;
-            color: #000000 !important; /* 무조건 검은색 */
+            color: #000000 !important;
             display: block;
             margin-bottom: 5px;
         }
         .sub-text {
             font-size: 1.0rem;
-            color: #222222 !important; /* 진한 검은색 */
+            color: #222222 !important;
             font-weight: 600;
         }
         
@@ -48,7 +52,7 @@ st.markdown("""
 # --- [1. 데이터 가져오기] ---
 @st.cache_data(ttl=300)
 def get_market_data():
-    data = {"price": 0.0, "fx": 1450.0}
+    data = {"price": 50.0, "fx": 1450.0}
     try:
         t = yf.Ticker("TQQQ").history(period="1d")
         if not t.empty: data["price"] = round(t['Close'].iloc[-1], 2)
@@ -77,23 +81,31 @@ with st.sidebar:
     
     st.divider()
     
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    # 구글 시트 연결
+    conn = None
+    if gsheets_available:
+        try:
+            conn = st.connection("gsheets", type=GSheetsConnection)
+        except: pass
+
     df = pd.DataFrame()
     last_v, last_pool, last_princ = 0.0, 0.0, 0.0
     
-    try:
-        df = conn.read(worksheet="Sheet1", ttl=0)
-        if not df.empty:
-            row = df.iloc[-1]
-            def safe_float(x):
-                try: return float(str(x).replace(',',''))
-                except: return 0.0
-            last_v = safe_float(row.get("V_old", 0))
-            last_pool = safe_float(row.get("Pool", 0))
-            last_princ = safe_float(row.get("Principal", 0))
-    except: pass
+    if conn:
+        try:
+            df = conn.read(worksheet="Sheet1", ttl=0)
+            if not df.empty:
+                row = df.iloc[-1]
+                def safe_float(x):
+                    try: return float(str(x).replace(',',''))
+                    except: return 0.0
+                last_v = safe_float(row.get("V_old", 0))
+                last_pool = safe_float(row.get("Pool", 0))
+                last_princ = safe_float(row.get("Principal", 0))
+        except: pass
 
     mode = st.radio("작업 선택", ["사이클 업데이트", "최초 시작"], horizontal=True)
+    
     curr_p = st.number_input("TQQQ 현재가 ($)", value=m["price"], format="%.2f")
     curr_fx = st.number_input("현재 환율 (원)", value=m["fx"])
     qty = st.number_input("현재 보유 수량 (주)", value=0)
@@ -115,14 +127,21 @@ with st.sidebar:
         v_final = last_v + growth + add_usd 
 
     if st.button("💾 데이터 저장"):
-        new_row = pd.DataFrame([{"Date": datetime.now().strftime('%Y-%m-%d'), "Qty": qty, "Pool": final_pool, "V_old": v_final, "Principal": princ_final, "Price": curr_p, "Band": int(b_pct*100)}])
-        final_df = pd.concat([df, new_row], ignore_index=True) if not df.empty else new_row
-        conn.update(worksheet="Sheet1", data=final_df.fillna(0))
-        st.success("저장 완료")
-        st.rerun()
+        if conn:
+            new_row = pd.DataFrame([{"Date": datetime.now().strftime('%Y-%m-%d'), "Qty": qty, "Pool": final_pool, "V_old": v_final, "Principal": princ_final, "Price": curr_p, "Band": int(b_pct*100)}])
+            final_df = pd.concat([df, new_row], ignore_index=True) if not df.empty else new_row
+            try:
+                conn.update(worksheet="Sheet1", data=final_df.fillna(0))
+                st.success("저장 완료")
+                st.rerun()
+            except: st.error("구글 시트 저장 실패")
+        else:
+            st.warning("구글 시트 연결 안됨")
 
 # --- [3. 메인 화면] ---
-if curr_p <= 0: st.stop()
+if curr_p <= 0:
+    st.error("왼쪽 사이드바에 현재가를 입력해주세요.")
+    st.stop()
 
 eval_usd = curr_p * qty
 total_usd = eval_usd + final_pool
@@ -137,12 +156,11 @@ tab1, tab2, tab3 = st.tabs(["📋 매매 가이드 (표)", "📈 성장 차트",
 with tab1:
     col_buy, col_sell = st.columns(2)
 
-    # === [매수점 로직: 하단부터 시작] ===
+    # === [매수점: 10단계 균등 분할] ===
     with col_buy:
         st.subheader("🔵 매수점 (Buying Point)")
         buy_limit = final_pool * pool_cap
         
-        # 10단계 분할 매수 수량
         total_buy_qty = int(buy_limit / (curr_p * 0.9)) if curr_p > 0 else 0
         step_buy_qty = max(1, int(total_buy_qty / 10))
 
@@ -153,13 +171,12 @@ with tab1:
         </div>
         """, unsafe_allow_html=True)
         
-        st.info(f"💡 **가이드:** {step_buy_qty}개씩 지정가 매수 (잔량 주문)")
+        st.info(f"💡 **가이드:** 주가가 떨어지면 **{step_buy_qty}개씩** 똑같이 사모으세요.")
 
         buy_data = []
         cur_pool = final_pool
         cur_qty = qty
         
-        # 매수: 현재가에서 -1.5%씩 내려가며 그물망
         for i in range(10):
             target_p = curr_p * (1 - (0.015 * (i+1))) 
             cost = target_p * step_buy_qty
@@ -174,18 +191,20 @@ with tab1:
         
         st.dataframe(pd.DataFrame(buy_data), use_container_width=True, hide_index=True)
 
-    # === [매도점 로직 수정: 밴드 상단 가격 기준] ===
+    # === [매도점 수정: 피라미드 분할 매도] ===
     with col_sell:
         st.subheader("🔴 매도점 (Selling Point)")
         
-        # [핵심 수정] 매도 시작 가격 = 밴드 상단 가격 (Max Value / Qty)
+        # 1. 매도 시작점 잡기
         start_sell_price = max_val / qty if qty > 0 else 0
-        
-        # 만약 현재가 > 상단가격 -> '현재가'부터 매도 시작 (이미 뚫었으니까)
-        # 만약 현재가 < 상단가격 -> '상단가격'부터 매도 시작 (아직 안 왔으니까 기다림)
         base_sell_price = max(curr_p, start_sell_price)
 
-        step_sell_qty = max(1, int(qty / 10)) # 보유량의 10%씩 분할 매도
+        # 2. 피라미드 매도 가중치 (갈수록 많이 팜)
+        # 총 10단계, 가중치: 1,1,2,2,3,3,4,4,5,5 (총합 30)
+        # 내 보유 수량을 30등분 하여 1단위로 설정
+        sell_weights = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
+        total_weight = sum(sell_weights)
+        unit_share = qty / total_weight if qty > 0 else 0
 
         st.markdown(f"""
         <div class="metric-box">
@@ -195,31 +214,35 @@ with tab1:
         """, unsafe_allow_html=True)
 
         if curr_p < start_sell_price:
-             st.info(f"💡 **대기:** 주가가 **${start_sell_price:.2f}**에 닿아야 팔립니다. 미리 예약만 해두세요.")
+             st.info(f"💡 **대기:** 주가가 **${start_sell_price:.2f}** 근처에 가야 조금씩 팔기 시작합니다.")
         else:
-             st.error(f"🚨 **돌파:** 이미 밴드 상단을 넘었습니다! 즉시 매도 구간입니다.")
+             st.error(f"🚨 **구간 진입:** 상승세입니다! 위로 갈수록 더 많이 파세요.")
 
         sell_data = []
         cur_pool_s = final_pool
         cur_qty_s = qty
         
-        # 매도: '상단 도달 가격'에서 +1.5%씩 올라가며 분할 매도
         for i in range(10):
-            if cur_qty_s >= step_sell_qty:
-                # 시작점(base_sell_price)에서 0%, 1.5%, 3%... 위로 설정
+            # 단계별 매도 수량 (소량 -> 대량)
+            # 최소 1주 이상은 팔리게 max(1, ...) 처리
+            sell_q_now = max(1, int(unit_share * sell_weights[i]))
+            
+            if cur_qty_s >= sell_q_now:
                 target_p = base_sell_price * (1 + (0.015 * i)) 
-                revenue = target_p * step_sell_qty
-                cur_qty_s -= step_sell_qty
+                revenue = target_p * sell_q_now
+                cur_qty_s -= sell_q_now
                 cur_pool_s += revenue
+                
                 sell_data.append({
                     "잔여 개수": f"{cur_qty_s}개",
                     "매도 가격": f"${target_p:.2f}",
+                    "매도 수량": f"🔻 {sell_q_now}주",
                     "예상 Pool": f"${cur_pool_s:,.2f}"
                 })
                 
         st.dataframe(pd.DataFrame(sell_data), use_container_width=True, hide_index=True)
 
-# --- [TAB 2: 성장 차트] ---
+# --- [TAB 2: 차트] ---
 with tab2:
     if not df.empty:
         c_df = df.copy()
@@ -242,44 +265,36 @@ with tab2:
         fig.update_layout(height=500, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig, use_container_width=True)
 
-# --- [TAB 3: 운용 매뉴얼 (초심자용 상세)] ---
+# --- [TAB 3: 운용 매뉴얼] ---
 with tab3:
     st.markdown("### 📘 VR 5.0 필승 운용 가이드")
     
-    with st.expander("STEP 1: 처음 시작할 때 (최초 세팅)", expanded=True):
+    with st.expander("STEP 1: 처음 시작할 때", expanded=True):
         st.markdown("""
         <div class="manual-step">
-        <b>1. 모드 선택:</b> 왼쪽 사이드바에서 [최초 시작]을 누르세요.<br>
-        <b>2. 원금 입력:</b> 투자할 총 금액(예: $5000)을 입력하세요.<br>
-        <b>3. 즉시 매수:</b> 화면에 "23주 사세요"라고 뜨면, 증권사 앱에서 <b>지금 당장 시장가</b>로 23주를 사세요.<br>
-        <b>4. 저장:</b> 매수 후 '데이터 저장' 버튼을 꾹 누르세요.
+        <b>1. 모드 선택:</b> [최초 시작] 클릭<br>
+        <b>2. 입력:</b> 총 원금(달러) 입력<br>
+        <b>3. 실행:</b> 계산된 수량만큼 즉시 매수 후 저장
         </div>
         """, unsafe_allow_html=True)
 
-    with st.expander("STEP 2: 2주마다 업데이트 (반복 루틴)", expanded=True):
+    with st.expander("STEP 2: 2주마다 업데이트", expanded=True):
         st.markdown("""
         <div class="manual-step">
-        <b>1. 모드 선택:</b> 왼쪽 사이드바에서 [사이클 업데이트]를 누르세요.<br>
-        <b>2. 잔고 입력:</b> 내 계좌를 보고 '주식 수'와 '남은 현금(달러)'을 정확히 적으세요.<br>
-        <b>3. 저장:</b> '데이터 저장'을 누르면 새로운 숙제(매매 가이드)가 나옵니다.<br>
-        <b>4. 확인:</b> [매매 가이드] 탭에 나온 표를 확인하세요.
+        <b>1. 모드 선택:</b> [사이클 업데이트] 클릭<br>
+        <b>2. 입력:</b> 현재 주식 수, 남은 현금 입력<br>
+        <b>3. 확인:</b> [매매 가이드] 탭의 표 확인
         </div>
         """, unsafe_allow_html=True)
 
-    with st.expander("STEP 3: 증권사 예약 주문 (숙제 하기)", expanded=True):
+    with st.expander("STEP 3: 예약 주문 (핵심)", expanded=True):
         st.markdown("""
         <div class="manual-step">
-        증권사 앱(영웅문 등)의 <b>[주식예약주문]</b> 메뉴를 켭니다.<br>
-        <br>
-        <b>🔵 매수 주문 (돈 버는 그물)</b><br>
-        1. <b>기간:</b> 오늘 ~ 2주 뒤까지 설정<br>
-        2. <b>조건:</b> <b>지정가</b>, <b>잔량(잔량유지)</b> 체크 필수!<br>
-        3. <b>입력:</b> 가이드 표의 '매수 가격'과 '수량'을 그대로 입력하고 예약 전송.<br>
-        (예: $50.50에 3주, $49.80에 3주... 10번 반복)<br>
-        <br>
-        <b>🔴 매도 주문 (수익 실현)</b><br>
-        1. 가이드 표의 매도 가격이 현재가보다 훨씬 높을 겁니다. (정상)<br>
-        2. 매수와 똑같이 <b>기간/지정가/잔량</b>으로 예약 매도를 걸어두세요.<br>
-        3. 2주 동안 주가가 폭등하면 알아서 팔립니다.
+        <b>🔵 매수 (그물치기)</b><br>
+        - 가이드 표에 나온대로 가격/수량을 <b>지정가+잔량</b>으로 예약.<br>
+        - 주가가 떨어지면 알아서 사집니다.<br><br>
+        <b>🔴 매도 (피라미드)</b><br>
+        - 가이드 표를 보세요. <b>위로 갈수록 매도 수량이 늘어납니다.</b><br>
+        - 밴드 상단 근처에선 조금 팔고, 폭등하면 많이 팔아서 수익을 극대화하세요.
         </div>
         """, unsafe_allow_html=True)
