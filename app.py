@@ -131,62 +131,72 @@ with tab1:
         else: st.info("보유량 없음")
 
 with tab2:
-    # 1. 데이터 준비
+    # 1. 데이터 준비 (가상 데이터 생성 X, 순수 데이터만 사용)
     c_df = df.copy() if not df.empty else pd.DataFrame()
     if not c_df.empty: c_df['Date'] = pd.to_datetime(c_df['Date'])
     
+    # 현재 시점 데이터 (화면 표시용)
+    now_date = datetime.now()
     now_df = pd.DataFrame([{
-        "Date": pd.to_datetime(datetime.now().strftime('%Y-%m-%d')), 
-        "V_old": v_final, 
-        "Qty": qty, 
-        "Price": curr_p, 
-        "Band": int(b_pct*100)
+        "Date": now_date, "V_old": v_final, "Qty": qty, "Price": curr_p, "Band": int(b_pct*100)
     }])
+    
     plot_df = pd.concat([c_df, now_df], ignore_index=True)
     plot_df = plot_df.drop_duplicates(subset=['Date'], keep='last').sort_values('Date')
     
-    # 2. 차트 데이터 계산
+    # 2. 차트 변수 계산
     plot_df["상단"] = plot_df["V_old"] * (1 + plot_df["Band"]/100.0)
     plot_df["하단"] = plot_df["V_old"] * (1 - plot_df["Band"]/100.0)
     plot_df["자산"] = plot_df["Qty"] * plot_df["Price"]
     
-    # 3. Y축 '타이트' 스케일링 계산
-    # (0이나 음수는 제외하고 실제 데이터 범위만 추출)
+    # 3. Y축 타이트 스케일 계산
     valid_vals = pd.concat([plot_df["상단"], plot_df["하단"], plot_df["자산"]])
     valid_vals = valid_vals[valid_vals > 0]
     
+    y_range = None
     if not valid_vals.empty:
-        y_min_real = valid_vals.min()
-        y_max_real = valid_vals.max()
-        
-        # 위아래 10% 정도만 여유를 둠 -> 밴드가 꽉 차게 보임
-        # 자산이 1000이면 약 900~1100 사이로 잡힘
-        y_range = [y_min_real * 0.9, y_max_real * 1.1]
-    else:
-        y_range = None # 데이터 없을 땐 자동
+        y_min_real, y_max_real = valid_vals.min(), valid_vals.max()
+        margin = (y_max_real - y_min_real) * 0.1 if y_max_real != y_min_real else y_max_real * 0.1
+        y_range = [y_min_real - margin, y_max_real + margin]
 
     # 4. 차트 그리기
     fig = go.Figure()
     
-    # 밴드 (초록)
-    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['상단'], line=dict(color='#00FF00', width=1.5), name='Band Top'))
-    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['하단'], line=dict(color='#00FF00', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='Band Bottom'))
+    # [핵심 변경] 선을 오른쪽으로 연장하기 위한 좌표 설정
+    # 마지막 데이터 포인트
+    last_date = plot_df['Date'].max()
+    last_v = plot_df['V_old'].iloc[-1]
+    last_top = plot_df['상단'].iloc[-1]
+    last_bottom = plot_df['하단'].iloc[-1]
     
-    # 목표 V (하늘색 점선)
-    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['V_old'], line=dict(color='#00BFFF', width=2, dash='dot'), name='Target V'))
+    # 미래 시점 (60일 뒤) 좌표 (시각적 연장용)
+    future_date = last_date + timedelta(days=60)
     
-    # 내 자산 (노랑)
+    # 4-1. 밴드 (과거~현재)
+    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['상단'], mode='lines', line=dict(color='#00FF00', width=1.5), name='Band Top', showlegend=True))
+    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['하단'], mode='lines', line=dict(color='#00FF00', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='Band Bottom', showlegend=True))
+    # 4-2. 밴드 (현재~미래 연장선) -> 데이터 없이 그림만 그림
+    fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_top, last_top], mode='lines', line=dict(color='#00FF00', width=1.5, dash='solid'), showlegend=False, hoverinfo='skip'))
+    fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_bottom, last_bottom], mode='lines', line=dict(color='#00FF00', width=1.5, dash='solid'), showlegend=False, hoverinfo='skip'))
+
+    # 4-3. 목표 V (과거~현재)
+    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['V_old'], mode='lines', line=dict(color='#00BFFF', width=2, dash='dot'), name='Target V', showlegend=True))
+    # 4-4. 목표 V (현재~미래 연장선)
+    fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_v, last_v], mode='lines', line=dict(color='#00BFFF', width=2, dash='dot'), showlegend=False, hoverinfo='skip'))
+    
+    # 4-5. 내 자산 (과거~현재만 표시, 미래 연장 X)
     mode_set = 'markers' if len(plot_df) == 1 else 'lines+markers'
     fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['자산'], 
                              line=dict(color='#FFFF00', width=3), 
                              marker=dict(size=8, color='#FFFF00'), 
                              mode=mode_set, name='My Asset'))
     
-    # X축 설정 (데이터 1개일 때 중앙 정렬)
-    xaxis_config = dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', tickformat='%y-%m-%d')
-    if len(plot_df) == 1:
-        d = plot_df['Date'].iloc[0]
-        xaxis_config['range'] = [d - timedelta(days=1), d + timedelta(days=1)]
+    # 5. X축 설정
+    xaxis_config = dict(
+        showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
+        tickformat='%y-%m-%d',
+        range=[plot_df['Date'].min() - timedelta(hours=12), future_date] # 시작점~미래시점까지 뷰 고정
+    )
 
     fig.update_layout(
         height=500,
@@ -196,7 +206,7 @@ with tab2:
         xaxis=xaxis_config,
         yaxis=dict(
             showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
-            range=y_range, # [핵심] 계산된 타이트한 범위 적용
+            range=y_range, 
             fixedrange=False
         ),
         legend=dict(orientation="h", y=1.05, x=1, xanchor="right")
