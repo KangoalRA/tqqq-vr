@@ -8,7 +8,6 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- [0. 화면 설정] ---
 st.set_page_config(page_title="TQQQ VR 5.0", layout="wide")
-
 st.markdown("""
     <style>
         .block-container {padding-top: 1.5rem; padding-bottom: 1rem;}
@@ -16,6 +15,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# 텔레그램
 def send_telegram_msg(msg):
     try:
         if "telegram" in st.secrets:
@@ -135,61 +135,69 @@ with tab2:
     c_df = df.copy() if not df.empty else pd.DataFrame()
     if not c_df.empty: c_df['Date'] = pd.to_datetime(c_df['Date'])
     
-    # 2. 현재 시점 추가 (Projection)
     now_df = pd.DataFrame([{
-        "Date": datetime.now(), 
+        "Date": pd.to_datetime(datetime.now().strftime('%Y-%m-%d')), 
         "V_old": v_final, 
         "Qty": qty, 
         "Price": curr_p, 
         "Band": int(b_pct*100)
     }])
     plot_df = pd.concat([c_df, now_df], ignore_index=True)
+    plot_df = plot_df.drop_duplicates(subset=['Date'], keep='last').sort_values('Date')
     
-    # 3. 차트용 변수 계산
+    # 2. 차트 데이터 계산
     plot_df["상단"] = plot_df["V_old"] * (1 + plot_df["Band"]/100.0)
     plot_df["하단"] = plot_df["V_old"] * (1 - plot_df["Band"]/100.0)
     plot_df["자산"] = plot_df["Qty"] * plot_df["Price"]
     
-    # 4. Y축 스케일 자동 조정 (값 1개일 때 대비)
-    all_values = pd.concat([plot_df["상단"], plot_df["하단"], plot_df["자산"]])
-    y_min, y_max = all_values.min(), all_values.max()
-    margin = (y_max - y_min) * 0.1 if y_max != y_min else y_max * 0.1
+    # 3. Y축 '타이트' 스케일링 계산
+    # (0이나 음수는 제외하고 실제 데이터 범위만 추출)
+    valid_vals = pd.concat([plot_df["상단"], plot_df["하단"], plot_df["자산"]])
+    valid_vals = valid_vals[valid_vals > 0]
     
-    # 5. X축 스케일 조정 (왼쪽 벽에 붙이기)
-    min_date = plot_df['Date'].min()
-    max_date = plot_df['Date'].max()
-    # 오른쪽에는 약간의 여백(5일 정도)을 둬서 미래 지향적으로 보이게 함
-    x_range_end = max_date + timedelta(days=5) if max_date == min_date else max_date + (max_date - min_date) * 0.1
+    if not valid_vals.empty:
+        y_min_real = valid_vals.min()
+        y_max_real = valid_vals.max()
+        
+        # 위아래 10% 정도만 여유를 둠 -> 밴드가 꽉 차게 보임
+        # 자산이 1000이면 약 900~1100 사이로 잡힘
+        y_range = [y_min_real * 0.9, y_max_real * 1.1]
+    else:
+        y_range = None # 데이터 없을 땐 자동
 
+    # 4. 차트 그리기
     fig = go.Figure()
     
-    # 밴드 (초록 실선)
-    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['상단'], 
-                             line=dict(color='#00FF00', width=1.5), name='Band Top'))
-    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['하단'], 
-                             line=dict(color='#00FF00', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='Band Bottom'))
+    # 밴드 (초록)
+    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['상단'], line=dict(color='#00FF00', width=1.5), name='Band Top'))
+    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['하단'], line=dict(color='#00FF00', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='Band Bottom'))
     
     # 목표 V (하늘색 점선)
-    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['V_old'], 
-                             line=dict(color='#00BFFF', width=2, dash='dot'), name='Target V'))
+    fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['V_old'], line=dict(color='#00BFFF', width=2, dash='dot'), name='Target V'))
     
-    # 내 자산 E (노란색 실선)
+    # 내 자산 (노랑)
+    mode_set = 'markers' if len(plot_df) == 1 else 'lines+markers'
     fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['자산'], 
-                             line=dict(color='#FFFF00', width=3), mode='lines+markers', name='My Asset(E)'))
+                             line=dict(color='#FFFF00', width=3), 
+                             marker=dict(size=8, color='#FFFF00'), 
+                             mode=mode_set, name='My Asset'))
     
+    # X축 설정 (데이터 1개일 때 중앙 정렬)
+    xaxis_config = dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', tickformat='%y-%m-%d')
+    if len(plot_df) == 1:
+        d = plot_df['Date'].iloc[0]
+        xaxis_config['range'] = [d - timedelta(days=1), d + timedelta(days=1)]
+
     fig.update_layout(
         height=500,
         paper_bgcolor='rgba(0,0,0,0)', 
         plot_bgcolor='rgba(0,0,0,0)',
         margin=dict(l=10, r=10, t=30, b=10),
-        xaxis=dict(
-            showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
-            tickformat='%y-%m-%d',
-            range=[min_date, x_range_end] # [핵심] 시작점을 min_date로 강제 고정
-        ),
+        xaxis=xaxis_config,
         yaxis=dict(
             showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
-            range=[y_min - margin, y_max + margin]
+            range=y_range, # [핵심] 계산된 타이트한 범위 적용
+            fixedrange=False
         ),
         legend=dict(orientation="h", y=1.05, x=1, xanchor="right")
     )
