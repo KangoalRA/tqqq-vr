@@ -7,24 +7,14 @@ import requests
 from streamlit_gsheets import GSheetsConnection
 
 # --- [0. 화면 설정] ---
-st.set_page_config(page_title="TQQQ VR 5.0", layout="wide")
+st.set_page_config(page_title="TQQQ VR 5.0 Official", layout="wide")
 st.markdown("""
     <style>
         .block-container {padding-top: 1.5rem; padding-bottom: 1rem;}
         div[data-testid="stMetricValue"] {font-size: 1.5rem !important; font-weight: 700;}
+        .manual-box { background-color: rgba(255, 255, 255, 0.05); padding: 20px; border-radius: 10px; border-left: 5px solid #00BFFF; }
     </style>
 """, unsafe_allow_html=True)
-
-# 텔레그램
-def send_telegram_msg(msg):
-    try:
-        if "telegram" in st.secrets:
-            token = st.secrets["telegram"]["bot_token"]
-            chat_id = st.secrets["telegram"]["chat_id"]
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            requests.post(url, data={"chat_id": chat_id, "text": msg})
-            st.toast("✅ 전송 완료")
-    except: pass
 
 @st.cache_data(ttl=300)
 def get_market_data():
@@ -41,8 +31,8 @@ m = get_market_data()
 
 # --- [사이드바] ---
 with st.sidebar:
-    st.header("📊 VR 5.0 설정")
-    invest_type = st.radio("투자 성향", ["적립식 (75%)", "거치식 (50%)"])
+    st.header("📊 VR 5.0 전략 설정")
+    invest_type = st.radio("투자 성향", ["적립식 (75% 사용)", "거치식 (50% 사용)"])
     pool_cap = 0.75 if "적립식" in invest_type else 0.50
     
     c1, c2 = st.columns(2)
@@ -59,11 +49,9 @@ with st.sidebar:
         df = conn.read(worksheet="Sheet1", ttl=0)
         if not df.empty:
             row = df.iloc[-1]
-            # [수정] 데이터를 가져올 때 안전하게 숫자로 변환
             def safe_float(x):
                 try: return float(str(x).replace(',',''))
                 except: return 0.0
-            
             last_v = safe_float(row.get("V_old", 0))
             last_princ = safe_float(row.get("Principal", 0))
     except: pass
@@ -102,16 +90,17 @@ eval_usd = curr_p * qty
 total_usd = eval_usd + pool
 roi = ((total_usd - princ_final)/princ_final*100) if princ_final > 0 else 0
 
-st.title("🚀 TQQQ VR 5.0 Dashboard")
+st.title("🚀 TQQQ VR 5.0 공식 시스템")
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("목표값 (V)", f"${v_final:,.0f}", f"+${growth:,.0f}")
-c2.metric("총 자산", f"${total_usd:,.0f}")
+c1.metric("계산된 목표값(V)", f"${v_final:,.0f}", f"+${growth:,.0f}")
+c2.metric("총 자산(E+P)", f"${total_usd:,.0f}")
 c3.metric("가용 Pool", f"${pool:,.0f}")
-c4.metric("수익률", f"{roi:.2f}%")
+c4.metric("현재 수익률", f"{roi:.2f}%")
 
-tab1, tab2 = st.tabs(["📋 매매 가이드", "📈 자산 성장 차트"])
+tab1, tab2, tab3 = st.tabs(["📋 매매 가이드", "📈 성장 히스토리", "📖 운용 매뉴얼"])
 
+# --- [Tab 1: 가이드] ---
 with tab1:
     col_buy, col_sell = st.columns(2)
     with col_buy:
@@ -133,101 +122,72 @@ with tab1:
                 st.error(f"🚨 돌파! {int((eval_usd-v_final)/curr_p)}주 매도")
             else:
                 st.success(f"목표가: ${target_p:.2f}")
-        else: st.info("보유량 없음")
 
+# --- [Tab 2: 차트] ---
 with tab2:
-    # 1. 데이터 준비
     c_df = df.copy() if not df.empty else pd.DataFrame()
-    
-    # [핵심 1] 날짜에서 '시간' 제거하여 날짜끼리만 비교되게 함 (중복 방지)
-    if not c_df.empty: 
-        c_df['Date'] = pd.to_datetime(c_df['Date']).dt.normalize()
-        # 숫자 컬럼 강제 변환 (문자열 '60' 등이 섞여있을 경우 방지)
-        for col in ['V_old', 'Band', 'Qty', 'Price']:
-            if col in c_df.columns:
-                c_df[col] = pd.to_numeric(c_df[col], errors='coerce').fillna(0)
-
-    # 현재 데이터 생성 (시간 제거)
+    if not c_df.empty: c_df['Date'] = pd.to_datetime(c_df['Date']).dt.normalize()
     now_date = pd.to_datetime(datetime.now().date())
-    now_df = pd.DataFrame([{
-        "Date": now_date, "V_old": v_final, "Qty": qty, "Price": curr_p, "Band": int(b_pct*100)
-    }])
-    
-    # 합치기 및 중복 제거
+    now_df = pd.DataFrame([{"Date": now_date, "V_old": v_final, "Qty": qty, "Price": curr_p, "Band": int(b_pct*100)}])
     plot_df = pd.concat([c_df, now_df], ignore_index=True)
     plot_df = plot_df.drop_duplicates(subset=['Date'], keep='last').sort_values('Date')
+    plot_df = plot_df[plot_df["V_old"] > 0]
     
-    # 2. 차트 변수 계산
     plot_df["상단"] = plot_df["V_old"] * (1 + plot_df["Band"]/100.0)
     plot_df["하단"] = plot_df["V_old"] * (1 - plot_df["Band"]/100.0)
     plot_df["자산"] = plot_df["Qty"] * plot_df["Price"]
     
-    # [핵심 2] 자산이 0원인 데이터(초기값 오류 등)는 차트에서 아예 빼버림 -> 수직 상승선 방지
-    plot_df = plot_df[plot_df["자산"] > 0]
-
-    # 3. Y축 스케일 계산
-    valid_vals = pd.concat([plot_df["상단"], plot_df["하단"], plot_df["자산"]])
-    y_range = None
-    if not valid_vals.empty:
-        y_min_real, y_max_real = valid_vals.min(), valid_vals.max()
-        margin = (y_max_real - y_min_real) * 0.1 if y_max_real != y_min_real else y_max_real * 0.1
-        y_range = [y_min_real - margin, y_max_real + margin]
-
-    # 4. 차트 그리기
     fig = go.Figure()
-
-    # 미래 연장선 좌표 계산
     if not plot_df.empty:
-        last_date = plot_df['Date'].max()
-        last_v = plot_df['V_old'].iloc[-1]
-        last_top = plot_df['상단'].iloc[-1]
-        last_bottom = plot_df['하단'].iloc[-1]
-        future_date = last_date + timedelta(days=60)
-
-        # 밴드 (과거~현재)
-        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['상단'], mode='lines', line=dict(color='#00FF00', width=1.5), name='Band Top', showlegend=True))
-        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['하단'], mode='lines', line=dict(color='#00FF00', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='Band Bottom', showlegend=True))
-        # 밴드 (미래 연장)
-        fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_top, last_top], mode='lines', line=dict(color='#00FF00', width=1.5, dash='solid'), showlegend=False, hoverinfo='skip'))
-        fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_bottom, last_bottom], mode='lines', line=dict(color='#00FF00', width=1.5, dash='solid'), showlegend=False, hoverinfo='skip'))
-
-        # 목표 V (과거~현재)
-        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['V_old'], mode='lines', line=dict(color='#00BFFF', width=2, dash='dot'), name='Target V', showlegend=True))
-        # 목표 V (미래 연장)
-        fig.add_trace(go.Scatter(x=[last_date, future_date], y=[last_v, last_v], mode='lines', line=dict(color='#00BFFF', width=2, dash='dot'), showlegend=False, hoverinfo='skip'))
+        last_d, last_v, last_t, last_b = plot_df['Date'].max(), plot_df['V_old'].iloc[-1], plot_df['상단'].iloc[-1], plot_df['하단'].iloc[-1]
+        future_d = last_d + timedelta(days=60)
         
-        # 내 자산 (과거~현재만)
-        mode_set = 'markers' if len(plot_df) == 1 else 'lines+markers'
-        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['자산'], 
-                                 line=dict(color='#FFFF00', width=3), 
-                                 marker=dict(size=8, color='#FFFF00'), 
-                                 mode=mode_set, name='My Asset'))
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['상단'], line=dict(color='#00FF00', width=1.5), name='밴드 상단'))
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['하단'], line=dict(color='#00FF00', width=1.5), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.05)', name='밴드 하단'))
+        fig.add_trace(go.Scatter(x=[last_d, future_d], y=[last_t, last_t], line=dict(color='#00FF00', width=1.5), showlegend=False))
+        fig.add_trace(go.Scatter(x=[last_d, future_d], y=[last_b, last_b], line=dict(color='#00FF00', width=1.5), showlegend=False))
+        fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['V_old'], line=dict(color='#00BFFF', width=2, dash='dot'), name='목표(V)'))
+        fig.add_trace(go.Scatter(x=[last_d, future_d], y=[last_v, last_v], line=dict(color='#00BFFF', width=2, dash='dot'), showlegend=False))
         
-        # X축 범위 설정
-        min_date = plot_df['Date'].min()
-        xaxis_config = dict(
-            showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
-            tickformat='%y-%m-%d',
-            range=[min_date - timedelta(hours=12), future_date] # 시작점 딱 맞춤
-        )
+        asset_plot = plot_df[plot_df["자산"] > 0]
+        fig.add_trace(go.Scatter(x=asset_plot['Date'], y=asset_plot['자산'], line=dict(color='#FFFF00', width=3), mode='lines+markers', name='내 자산(E)'))
         
-        # 오늘 처음이라 데이터가 1개뿐일 때 시각 보정
-        if len(plot_df) == 1:
-             xaxis_config['range'] = [min_date - timedelta(days=2), min_date + timedelta(days=30)]
-
-        fig.update_layout(
-            height=500,
-            paper_bgcolor='rgba(0,0,0,0)', 
-            plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(l=10, r=10, t=30, b=10),
-            xaxis=xaxis_config,
-            yaxis=dict(
-                showgrid=True, gridcolor='rgba(255,255,255,0.1)', 
-                range=y_range, 
-                fixedrange=False
-            ),
-            legend=dict(orientation="h", y=1.05, x=1, xanchor="right")
-        )
+        fig.update_layout(height=500, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(tickformat='%y-%m-%d', range=[plot_df['Date'].min() - timedelta(days=1), future_d]), yaxis=dict(autorange=True, fixedrange=False))
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("데이터가 없습니다. 데이터를 저장해주세요.")
+
+# --- [Tab 3: 매뉴얼] ---
+with tab3:
+    st.markdown("### 📖 VR 5.0 (Pool형) 운용 가이드")
+    
+    st.info("**기본 철학:** 시장을 예측하지 않는다. 오직 가용 현금(Pool)의 한도와 목표 가치(V)를 기준으로 리스크를 통제한다.")
+
+    col_m1, col_m2 = st.columns(2)
+    
+    with col_m1:
+        st.markdown("#### 1️⃣ 최초 시작 (First Start)")
+        st.write("VR을 **처음 세팅하거나 완전히 새로 시작**할 때 사용합니다.")
+        st.markdown("""
+        * **언제?** 생전 처음 이 시스템을 켤 때.
+        * **원칙:** 현재 내 자산 상태($Price \\times Qty$)를 그대로 첫 번째 $V$값으로 고정합니다.
+        * **주의:** 투입한 원금($Principal$)을 정확히 적어야 정확한 수익률 계산이 가능합니다.
+        """)
+        
+    with col_m2:
+        st.markdown("#### 2️⃣ 사이클 업데이트 (Cycle Update)")
+        st.write("**2주에 한 번씩** 주기적으로 갱신하며 우상향을 유도합니다.")
+        st.markdown("""
+        * **언제?** 2주간의 매매가 끝난 후 새 계획을 짤 때.
+        * **공식:** $V_{new} = V_{old} + (Pool / G) + \text{신규 적립금}$
+        * **핵심:** 현금($Pool$)이 많으면 $V$가 가파르게 성장하고, 현금이 없으면 성장이 더뎌지며 주가가 오르길 기다립니다.
+        """)
+
+    st.divider()
+
+    st.markdown("#### 💡 결정적 운용 팁 (Trading Tips)")
+    st.table(pd.DataFrame({
+        "구분": ["매수 (Buying)", "매도 (Selling)", "관망 (Holding)"],
+        "기준": ["평가금 < 밴드 하단", "평가금 > 밴드 상단", "밴드 내부"],
+        "행동": ["가용 Pool 내에서 LOC 매수", "초과분($E-V$)만큼 리밸런싱 매도", "아무것도 안 함 (생업에 집중)"]
+    }))
+
+    st.warning("⚠️ **가장 중요한 리스크 관리:** 하락장이 길어지면 Pool 한도(50% or 75%)를 다 쓰게 됩니다. 이때는 추가 매수를 멈추고 주가가 반등하여 다시 밴드 안으로 들어올 때까지 기다려야 생존할 수 있습니다.")
